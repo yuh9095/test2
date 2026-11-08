@@ -115,9 +115,13 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t *p,int flags,int argc,const char
     if(svc)snprintf(q.service,sizeof(q.service),"%s",svc);
     if(tty)snprintf(q.tty,sizeof(q.tty),"%s",tty);
     if(host&&host[0])q.flags|=DL_SESSION_REGISTRATION_FLAG_REMOTE;
-    if(request_socket(path,&q)<0)return PAM_SESSION_ERR;
-    saved=strdup(q.session_id);
-    if(!saved){close_request(&q);(void)request_socket(path,&q);return PAM_BUF_ERR;}
+    if(dl_pam_session_open(&state,&q,pam_transport,(void *)path)!=0)
+        return PAM_SESSION_ERR;
+    saved=strdup(state.session_id);
+    if(!saved){
+        (void)dl_pam_session_close(&state,pam_transport,(void *)path);
+        return PAM_BUF_ERR;
+    }
     st=pam_set_data(p,DATA_KEY,saved,free_id);
     if(st!=PAM_SUCCESS){
         (void)dl_pam_session_close(&state,pam_transport,(void *)path);

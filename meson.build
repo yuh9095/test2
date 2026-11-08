@@ -4,7 +4,11 @@ udev_dep=dependency('libudev')
 cc=meson.get_compiler('c')
 pam_lib=cc.find_library('pam',required:false)
 pam_header=cc.has_header('security/pam_modules.h')
-pam_lifecycle_lib=static_library('dinit-logind-pam-lifecycle',\n  files('src/pam/lifecycle.c'),include_directories:include_directories('src'),install:false)\npam_lifecycle_dep=declare_dependency(link_with:pam_lifecycle_lib,\n  include_directories:include_directories('src'))\ncore_lib=static_library('dinit-logind-core',files('src/core/manager.c'),
+pam_lifecycle_lib=static_library('dinit-logind-pam-lifecycle',
+  files('src/pam/lifecycle.c'),include_directories:include_directories('src'),install:false)
+pam_lifecycle_dep=declare_dependency(link_with:pam_lifecycle_lib,
+  include_directories:include_directories('src'))
+core_lib=static_library('dinit-logind-core',files('src/core/manager.c'),
   include_directories:include_directories('src'),install:false)
 core_dep=declare_dependency(link_with:core_lib,include_directories:include_directories('src'))
 session_lib=static_library('dinit-logind-session-registration',

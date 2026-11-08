@@ -56,6 +56,24 @@ static void call_ok(sd_bus *bus,const char *path,const char *interface,
 }
 
 
+static void call_error_name(sd_bus *bus,const char *path,
+    const char *interface,const char *method,const char *expected,
+    const char *signature,...)
+{
+    sd_bus_error error=SD_BUS_ERROR_NULL;
+    sd_bus_message *reply=NULL;
+    va_list ap;
+    int r;
+    va_start(ap,signature);
+    r=sd_bus_call_methodv(bus,"org.freedesktop.login1",path,interface,
+        method,&error,&reply,signature,ap);
+    va_end(ap);
+    assert(r<0);
+    assert(error.name!=NULL && strcmp(error.name,expected)==0);
+    sd_bus_message_unref(reply);
+    sd_bus_error_free(&error);
+}
+
 static void call_not_supported(sd_bus *bus,const char *path,
     const char *interface,const char *method,const char *signature,...)
 {
@@ -185,6 +203,12 @@ int main(void)
         assert(WIFSIGNALED(status) && WTERMSIG(status)==SIGTERM);
         call_not_supported(client,kill_path,
             "org.freedesktop.login1.Session","Kill","si","all",SIGTERM);
+        call_error_name(client,"/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager","KillSession",
+            SD_BUS_ERROR_INVALID_ARGS,"ssi","kill-test","unknown",SIGTERM);
+        call_error_name(client,"/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager","KillSession",
+            SD_BUS_ERROR_INVALID_ARGS,"ssi","kill-test","leader",0);
     }
     call_not_supported(client,object_path,
         "org.freedesktop.login1.Session","Terminate","");

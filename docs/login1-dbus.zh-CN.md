@@ -9,50 +9,59 @@ Manager：
 - `ListSessions()`、`GetSession()`、`GetSessionByPID()`
 - `ListSeats()`、`GetSeat()`
 - `GetUser()`、`GetUserByPID()`、`ListUsers()`；User 对象提供 `UID`、`Name`、`Sessions`。
-- `TerminateSession()`、`KillSession()`（当前明确返回 NotSupported）
+- `KillSession(id, who, signal)`：支持 `leader` 的 pidfd 安全信号发送；
+  `all` 仅支持 SIGKILL，并要求登记 cgroup 路径可安全打开且 Leader 当前属于该 cgroup。
+- `TerminateSession()`：目前返回 NotSupported，尚未实现异步优雅终止流程。
 
 Session：
-- 基础属性：Id、User、Name、Seat、TTY、Display、Remote、Service、Desktop、
-  Leader、CGroup、VTNr、Type、Class、Active
-- `Activate()`：更新核心模型中的 Seat 活动 Session，并发送 Active 属性变化通知。
-  当前尚未连接 VT ioctl，因此不等同于完整物理 VT 切换。
+- 属性：Id、User、Name、Seat、TTY、Display、Remote、Service、Desktop、
+  Leader、CGroup、VTNr、Type、Class、Active。
+- `Activate()`：更新 Seat 活动 Session；这是逻辑激活，不保证物理 VT 已切换。
 - `Lock()`、`Unlock()`：向对应 Session 对象发出 Lock/Unlock 信号。
+- `Kill(who, signal)`：`leader` 通过 pidfd 发送指定有效信号；`all` 只允许
+  SIGKILL，并使用 cgroup v2 的 `cgroup.kill`。
+- `Terminate()`：目前返回 NotSupported。
 - `TakeControl(force)`、`ReleaseControl()`：以 D-Bus unique name 绑定控制权；
   校验调用者 UID，强制接管仅允许 root。
 - `TakeDevice(major,minor)`：由核心设备管理层打开并验证字符设备，返回 D-Bus Unix FD
   和 inactive 标志。
 - `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。
 
-Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑活动 Session 并发送属性变化通知；`SwitchTo(vtnr)` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，容器没有可用 VT 时返回 NotSupported。Session 增加 `VTNr` 属性。
-User：新增最小对象，导出 UID、Name。
+Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑
+活动 Session；`SwitchTo(vtnr)` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，
+容器没有可用 VT 时返回 NotSupported。Session 增加 `VTNr` 属性。
+User：导出 UID、Name、Sessions。
 
-对象路径中的非字母数字字符采用十六进制转义。Session 的 User 属性现在指向已导出的
+对象路径中的非字母数字字符采用十六进制转义。Session 的 User 属性指向已导出的
 User 对象路径。
 
-## 尚未完成的语义
+## 安全边界与尚未完成的语义
 
-- **Terminate / Kill**：目前注册方法但返回 `org.freedesktop.DBus.Error.NotSupported`。
-  注册协议 v2 已支持可选的相对 unified-cgroup 路径元数据，核心会校验路径格式并公开 `CGroup` 属性；旧 v1 socket 客户端仍兼容。但目前尚未核验 Leader 与 cgroup 的实时成员关系，也没有 PIDFD 生命周期保护，因此仍不能安全地向 Session 进程发送信号。
-- **Activate**：目前切换逻辑活动 Session，不执行 VT_ACTIVATE / VT_WAITACTIVE。
-- **设备暂停通知**：核心具备 pause state，但尚未将 seatd/libseat 的暂停/恢复事件完整映射为
-  login1 的 PauseDevice / ResumeDevice 信号。
-- **D-Bus 运行时测试**：已增加私有总线端到端测试，覆盖当前列出的 Manager/Session 方法；
-  已覆盖 `CGroup` 属性和当前列出的 Manager/Session 方法；尚未覆盖设备 FD、Pause/Resume 信号、VT 切换和完整桌面客户端行为。
-- `GetSessionByPID` 仍只匹配已登记 Leader PID；PID reuse / pidfd 保护及全 Session
-  进程映射仍待实现。核心现在会在 Session 注册时尝试捕获 Leader 的 pidfd，并提供仅供内部使用的安全复制接口；内核不支持 pidfd 或 Leader 已退出时，不会退回到不受保护的 PID 信号操作。
-
-默认启动需要系统总线运行，且不能有其他服务占用 `org.freedesktop.login1`。
-`--no-login1` 可用于不启动 D-Bus 的核心/设备适配器调试。
-
+- **Kill leader**：依赖注册时捕获的 pidfd；不支持 pidfd 或 Leader 已退出时明确失败，
+  不回退到裸 PID。D-Bus 调用只允许 root 或 Session 所有者。
+- **Kill all**：目前只实现 cgroup v2 的 SIGKILL 路径。cgroup 路径先通过逐组件
+  `openat(O_NOFOLLOW)` 安全遍历，再检查 `cgroup.procs` 中存在 Leader PID，
+  最后写入 `cgroup.kill`。路径元数据本身不被当作成员身份凭据。
+- **Terminate**：尚未实现 SIGTERM、异步宽限期、超时后 SIGKILL 的完整状态机；
+  因此 `Terminate()` 与 `TerminateSession()` 保持 NotSupported。
+- **设备暂停通知**：核心有 pause state 与超时原语，但尚未把 seatd/libseat 的
+  pause/resume 回调映射为 login1 的 PauseDevice/ResumeDevice 信号，也未完成
+  D-Bus FD 生命周期与控制器断连清理。
+- **VT**：目前支持 seat0 的 `SwitchTo(vtnr)`；`SwitchToNext/Previous`、
+  Seat.Terminate 仍未实现。
+- **Session 查询**：`GetSessionByPID` / `GetUserByPID` 当前只按已登记 Leader PID
+  匹配，不是整个 Session 的进程索引。
+- **Turnstile/PAM**：已有特权注册协议和 PAM 生命周期基础；完整 Turnstile 会话属性、
+  XDG_RUNTIME_DIR 生命周期、用户服务管理仍需集成与端到端验证。
 
 ## 私有 D-Bus 集成测试
 
-构建系统在检测到 `dbus-run-session` 时会注册
-`login1-private-dbus-integration` 测试。测试使用临时会话总线启动
-login1 服务端和独立客户端，不占用宿主机的系统总线，也不需要运行
-systemd 或 systemd-logind。
+构建系统在检测到 `dbus-run-session` 时注册
+`login1-private-dbus-integration`。测试使用临时会话总线，不占用宿主机系统总线，
+也不要求 systemd 或 systemd-logind。测试覆盖 Manager/Session 查询、用户查询、
+Seat/Session 激活、Lock/Unlock、TakeControl/ReleaseControl，以及真实 pidfd Leader
+信号发送与非法 Kill 参数。物理 VT、真实图形设备 FD、pause/resume 和完整桌面客户端
+行为仍需在具有相应硬件与 seatd/libseat 环境的系统中验证。
 
-该测试覆盖 Manager.GetSession/ListSessions、GetUser/GetUserByPID/ListUsers、Session.Activate、Seat.ActivateSession、
-Lock/Unlock、TakeControl/ReleaseControl 的真实 D-Bus 调用路径。
-生产入口 `dl_login1_open()` 仍连接系统总线；测试专用入口
-`dl_login1_open_address()` 只接受显式 D-Bus 地址。
+默认生产入口连接系统总线并取得 `org.freedesktop.login1` 名称；
+`--no-login1` 可用于不启动 D-Bus 的核心/设备适配器调试。

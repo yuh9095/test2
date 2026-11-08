@@ -16,6 +16,9 @@ jobs:
     name: GCC static analyzer
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      CC: gcc
+      CFLAGS: -O2 -g -fanalyzer -Werror=analyzer-null-dereference -Werror=analyzer-use-after-free -Werror=analyzer-double-free
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -60,6 +63,10 @@ jobs:
     name: Hardened release build
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      CC: gcc
+      CFLAGS: -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -fno-common -fPIE -Wformat=2 -Werror=format-security -Werror=implicit-function-declaration
+      LDFLAGS: -Wl,-z,relro,-z,now -Wl,-z,noexecstack -pie
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain

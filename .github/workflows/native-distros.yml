@@ -81,6 +81,7 @@ jobs:
 
     env:
       CC: ${{ matrix.compiler }}
+      CFLAGS: -O2 -g -fno-common -fstack-protector-strong -Wformat=2 -Werror=format-security
 
     steps:
       - name: Install native distro dependencies
@@ -134,11 +135,7 @@ jobs:
         run: meson setup build --buildtype=debug
 
       - name: Compile with strict warnings
-        env:
-          CFLAGS: -O2 -g -fno-common -fstack-protector-strong -Wformat=2 -Werror=format-security
-        run: |
-          meson configure build -Dc_args="$CFLAGS"
-          meson compile -C build
+        run: meson compile -C build
 
       - name: Run complete test suite
         run: meson test -C build --print-errorlogs --no-rebuild

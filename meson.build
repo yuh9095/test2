@@ -44,6 +44,27 @@ linux_platform_dep = declare_dependency(
   include_directories: include_directories('src'),
 )
 
+daemon_exe = executable(
+  'dinit-logind',
+  'src/daemon/main.c',
+  dependencies: linux_platform_dep,
+  install: true,
+)
+
+test(
+  'daemon-help',
+  daemon_exe,
+  args: ['--help'],
+  timeout: 10,
+)
+
+test(
+  'daemon-version',
+  daemon_exe,
+  args: ['--version'],
+  timeout: 10,
+)
+
 test_exe = executable(
   'test-core',
   'tests/test-core.c',

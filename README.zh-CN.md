@@ -4,7 +4,7 @@
 
 [English](README.md) | 简体中文
 
-> **项目状态：早期开发阶段。** 仓库目前已有第一版 C11 核心状态模型和单元测试，但尚未形成可用的 login1 D-Bus 服务，也尚未完成 Turnstile、seatd/libseat、elogind API 兼容层或 eudev 集成。
+> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev 设备适配层，以及可由 Dinit 监督的前台守护进程入口。login1 D-Bus、Turnstile 会话创建、libseat FD 交接和 elogind API 兼容仍未完成。
 
 ## 构建与测试
 

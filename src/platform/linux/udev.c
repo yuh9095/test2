@@ -206,9 +206,10 @@ int dl_udev_dispatch(
         errno = EINVAL;
         return -1;
     }
+    errno = 0;
     device = udev_monitor_receive_device(udev->monitor);
     if (device == NULL) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == 0) {
             return 0;
         }
         return -1;

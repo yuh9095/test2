@@ -34,6 +34,11 @@ int main(void)
     assert(dl_udev_seat_monitor_open(
         &monitor, manager, select_explicit_seat, NULL) == 0);
     assert(dl_udev_seat_monitor_get_fd(monitor) >= 0);
+    assert(dl_udev_seat_monitor_poll(monitor, 0) >= 0);
+    assert(dl_udev_seat_monitor_poll(NULL, 0) == -1);
+    assert(errno == EINVAL);
+    assert(dl_udev_seat_monitor_poll(monitor, -2) == -1);
+    assert(errno == EINVAL);
 
     memset(&device, 0, sizeof(device));
     device.action = "add";

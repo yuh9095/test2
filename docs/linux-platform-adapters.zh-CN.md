@@ -12,27 +12,39 @@ are borrowed for the duration of the callback.
 
 ## eudev-to-Seat Manager integration
 
-`udev-manager.c` connects that adapter to the existing core Manager. It
-enumerates devices, exposes the monitor FD for poll/epoll, and applies add,
-change, and remove events to the core device registry. It caches the last
-syspath-to-Seat/device mapping so a remove event can clean up the correct
-core device even when udev no longer supplies a devnode or `ID_SEAT`.
+`udev-manager.c` connects the libudev adapter to the core Manager. It
+enumerates existing devices, applies add/change/remove events to the core
+device registry, and caches the syspath-to-Seat mapping so removal still
+works when udev no longer supplies a devnode or `ID_SEAT`.
 
-Seat assignment is deliberately policy-driven. The supplied policy callback
-chooses the Seat and capability flags. The adapter does not silently assign
-devices without an explicit Seat decision to `seat0`; a policy can use
-`ID_SEAT` where available and apply any additional Linux-specific rules it
-needs. Only character devices are registered for session device access.
+Seat assignment is policy-driven. The policy callback selects a Seat and
+capability flags. Devices without an explicit policy decision are ignored;
+the adapter never silently assigns an unlabelled device to `seat0`. Only
+character devices are registered for session device access. The adapter
+creates a core Seat when the policy first selects it.
 
-The integration creates a core Seat when the policy first selects it. It
-does not start eudevd, change udev rules, grant access by itself, or replace
-the caller's responsibility to run the monitor FD in its event loop. Device
-FD authorization remains in the core Manager and the future login1 D-Bus
-transport.
+## Event-loop integration
 
-Open the monitor before calling enumerate so events occurring during the
-initial inventory scan are queued for subsequent dispatch. Call
-`dl_udev_seat_monitor_dispatch()` whenever its FD becomes readable.
+Open the monitor before enumerating the initial inventory so events arriving
+during enumeration remain queued:
+
+1. Create the core Manager.
+2. Open `dl_udev_seat_monitor`.
+3. Call `dl_udev_seat_monitor_enumerate()`.
+4. Add `dl_udev_seat_monitor_get_fd()` to the daemon's epoll loop, or call
+   `dl_udev_seat_monitor_poll()` from a poll-based loop.
+5. When readable, call `dl_udev_seat_monitor_dispatch()`, or let
+   `dl_udev_seat_monitor_poll()` wait and dispatch automatically.
+
+The poll helper dispatches at most 64 queued events per call to avoid
+starving other daemon work. A timeout of -1 waits indefinitely, 0 performs
+a non-blocking poll, and a positive timeout allows the caller to service
+other timers and IPC. EINTR is returned to the caller so it can process
+signals. The raw FD remains available for a daemon that already uses epoll.
+
+The adapter does not start eudevd, change udev rules, or independently grant
+device access. Device authorization and FD lifecycle remain core Manager
+responsibilities, with the login1 D-Bus transport still to be connected.
 
 ## VT adapter
 

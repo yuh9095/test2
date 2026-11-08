@@ -2,8 +2,11 @@
 #include "platform/linux/udev-manager.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define DL_UDEV_DISPATCH_BATCH_MAX 64
 
 typedef struct dl_udev_managed_device {
     char *syspath;
@@ -41,22 +44,15 @@ static char *copy_string(const char *value)
 static int manager_error_to_errno(dl_error error)
 {
     switch (error) {
-    case DL_OK:
-        return 0;
-    case DL_ERROR_NO_MEMORY:
-        return ENOMEM;
-    case DL_ERROR_NOT_FOUND:
-        return ENOENT;
-    case DL_ERROR_ALREADY_EXISTS:
-        return EEXIST;
-    case DL_ERROR_BUSY:
-        return EBUSY;
-    case DL_ERROR_LIMIT:
-        return EOVERFLOW;
+    case DL_OK: return 0;
+    case DL_ERROR_NO_MEMORY: return ENOMEM;
+    case DL_ERROR_NOT_FOUND: return ENOENT;
+    case DL_ERROR_ALREADY_EXISTS: return EEXIST;
+    case DL_ERROR_BUSY: return EBUSY;
+    case DL_ERROR_LIMIT: return EOVERFLOW;
     case DL_ERROR_INVALID_ARGUMENT:
     case DL_ERROR_INVALID_STATE:
-    default:
-        return EINVAL;
+    default: return EINVAL;
     }
 }
 
@@ -93,10 +89,8 @@ static int remove_tracked_device(
     }
 
     result = dl_manager_remove_device(
-        monitor->manager,
-        device->seat_id,
-        device->major_number,
-        device->minor_number);
+        monitor->manager, device->seat_id,
+        device->major_number, device->minor_number);
     if (result != DL_OK && result != DL_ERROR_NOT_FOUND) {
         errno = manager_error_to_errno(result);
         return -1;
@@ -124,7 +118,6 @@ int dl_udev_seat_monitor_apply(
     dl_udev_seat_monitor *monitor,
     const dl_udev_device_info *device)
 {
-    const char *action;
     const char *seat_id = NULL;
     unsigned int capabilities = DL_DEVICE_CAP_NONE;
     bool selected;
@@ -138,15 +131,15 @@ int dl_udev_seat_monitor_apply(
         errno = EINVAL;
         return -1;
     }
-    action = device->action;
 
-    if (action != NULL && strcmp(action, "remove") == 0) {
+    if (device->action != NULL &&
+        strcmp(device->action, "remove") == 0) {
         removed = remove_tracked_device(monitor, device->syspath);
         if (removed != 0) {
             return removed;
         }
 
-        /* A remove can arrive before initial enumeration populated our cache. */
+        /* A remove may arrive before the inventory cache was populated. */
         selected = monitor->policy(
             device, &seat_id, &capabilities, monitor->userdata);
         if (!selected || seat_id == NULL || seat_id[0] == '\0') {
@@ -155,26 +148,21 @@ int dl_udev_seat_monitor_apply(
         result = dl_manager_remove_device(
             monitor->manager, seat_id,
             device->major_number, device->minor_number);
-        if (result == DL_OK) {
-            return 1;
-        }
-        if (result == DL_ERROR_NOT_FOUND) {
-            return 0;
-        }
+        if (result == DL_OK) return 1;
+        if (result == DL_ERROR_NOT_FOUND) return 0;
         errno = manager_error_to_errno(result);
         return -1;
     }
 
-    if (action != NULL && strcmp(action, "add") != 0 &&
-        strcmp(action, "change") != 0) {
+    if (device->action != NULL &&
+        strcmp(device->action, "add") != 0 &&
+        strcmp(device->action, "change") != 0) {
         return 0;
     }
 
-    /* Reconcile change/add events against the last version we registered. */
+    /* Reconcile a changed device against its previously registered identity. */
     removed = remove_tracked_device(monitor, device->syspath);
-    if (removed < 0) {
-        return -1;
-    }
+    if (removed < 0) return -1;
 
     if (!device->is_character_device || device->devnode == NULL ||
         device->syspath == NULL || device->syspath[0] == '\0') {
@@ -195,7 +183,6 @@ int dl_udev_seat_monitor_apply(
         errno = ENOMEM;
         return -1;
     }
-
     if (ensure_seat(monitor, seat_id) != 0) {
         free(seat_copy);
         free(syspath_copy);
@@ -203,14 +190,10 @@ int dl_udev_seat_monitor_apply(
     }
 
     result = dl_manager_register_device_node(
-        monitor->manager,
-        seat_id,
-        device->major_number,
-        device->minor_number,
-        device->devnode,
-        device->master_of_seat,
-        capabilities,
-        &(uint64_t){0});
+        monitor->manager, seat_id,
+        device->major_number, device->minor_number,
+        device->devnode, device->master_of_seat,
+        capabilities, &(uint64_t){0});
     if (result != DL_OK) {
         free(seat_copy);
         free(syspath_copy);
@@ -264,9 +247,8 @@ int dl_udev_seat_monitor_open(
     }
     *out_monitor = NULL;
     monitor = calloc(1U, sizeof(*monitor));
-    if (monitor == NULL) {
-        return -1;
-    }
+    if (monitor == NULL) return -1;
+
     monitor->manager = manager;
     monitor->policy = policy;
     monitor->userdata = userdata;
@@ -282,9 +264,7 @@ void dl_udev_seat_monitor_close(dl_udev_seat_monitor *monitor)
 {
     dl_udev_managed_device *device;
 
-    if (monitor == NULL) {
-        return;
-    }
+    if (monitor == NULL) return;
     device = monitor->devices;
     while (device != NULL) {
         dl_udev_managed_device *next = device->next;
@@ -320,9 +300,7 @@ int dl_udev_seat_monitor_enumerate(dl_udev_seat_monitor *monitor)
     monitor->callback_error = 0;
     result = dl_udev_enumerate(
         monitor->udev, monitor_device_callback, monitor);
-    if (result < 0) {
-        return -1;
-    }
+    if (result < 0) return -1;
     if (monitor->callback_error != 0) {
         errno = monitor->callback_error;
         return -1;
@@ -346,4 +324,42 @@ int dl_udev_seat_monitor_dispatch(dl_udev_seat_monitor *monitor)
         return -1;
     }
     return result;
+}
+
+int dl_udev_seat_monitor_poll(
+    dl_udev_seat_monitor *monitor,
+    int timeout_milliseconds)
+{
+    struct pollfd descriptor;
+    int poll_result;
+    int dispatched = 0;
+
+    if (monitor == NULL || timeout_milliseconds < -1) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    descriptor.fd = dl_udev_seat_monitor_get_fd(monitor);
+    if (descriptor.fd < 0) return -1;
+    descriptor.events = POLLIN;
+    descriptor.revents = 0;
+
+    poll_result = poll(&descriptor, 1U, timeout_milliseconds);
+    if (poll_result < 0) return -1;
+    if (poll_result == 0) return 0;
+    if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        errno = EIO;
+        return -1;
+    }
+    if ((descriptor.revents & (POLLIN | POLLPRI)) == 0) {
+        return 0;
+    }
+
+    while (dispatched < DL_UDEV_DISPATCH_BATCH_MAX) {
+        int result = dl_udev_seat_monitor_dispatch(monitor);
+        if (result < 0) return -1;
+        if (result == 0) break;
+        dispatched++;
+    }
+    return dispatched;
 }

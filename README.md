@@ -90,12 +90,11 @@ exposed through the login1 Session `CGroup` property. Legacy v1 wire messages,
 including their shorter packet size, remain accepted.
 
 The core also captures a pidfd for the registered Leader when the kernel supports it,
-retaining a stable process identity and refusing to fall back to an unprotected PID
-when pidfd support is unavailable or the process has exited. The cgroup path remains
-metadata only and is not yet proof of live process membership. Session-wide
-`Terminate()` / `Kill()` remain explicitly unsupported until the execution
-path securely walks cgroup directories using file descriptors, verifies that
-the registered Leader is still a member, and protects against PID reuse.
+retaining a stable process identity and refusing to fall back to an unprotected PID.
+The login1 service supports `Kill("leader", signal)` through pidfd and supports
+`Kill("all", SIGKILL)` only when the registered cgroup v2 directory can be safely
+opened and its `cgroup.procs` contains the registered Leader. This does not yet
+implement asynchronous `Terminate()` / `TerminateSession()` with a grace period.
 
 ## Planned internal areas
 

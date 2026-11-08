@@ -19,6 +19,7 @@
 
 struct dl_login1 {
     sd_bus *bus;
+    sd_bus_slot *owner_slot;
     sd_bus_slot *manager_slot;
     sd_bus_slot *session_slot;
     sd_bus_slot *seat_slot;

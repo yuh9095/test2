@@ -456,6 +456,97 @@ static int switch_to_vt(sd_bus *bus, dl_manager *manager,
     return 0;
 }
 
+static int method_seat_switch_relative(sd_bus_message *m,
+    void *userdata, int direction)
+{
+    char seat_id[128];
+    const char *active_id = NULL;
+    dl_session_properties active = {0};
+    unsigned int current_vt = 0U, candidate_vt, selected_vt = 0U;
+    size_t i, count;
+    sd_bus_creds *creds = NULL;
+    uid_t euid;
+    int r;
+    if ((r = seat_lookup(sd_bus_message_get_path(m), userdata, seat_id,
+            sizeof(seat_id))) < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "Seat does not exist");
+    if ((r = sd_bus_query_sender_creds(m, SD_BUS_CREDS_EUID, &creds)) < 0)
+        return r;
+    r = sd_bus_creds_get_euid(creds, &euid);
+    sd_bus_creds_unref(creds);
+    if (r < 0) return r;
+    if (euid != 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Only root may switch virtual terminals");
+    if (strcmp(seat_id, "seat0") != 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
+            "Relative VT switching is only supported on seat0");
+    if (dl_manager_get_active_session(userdata, seat_id, &active_id) == DL_OK &&
+        active_id != NULL &&
+        dl_manager_get_session_properties(userdata, active_id, &active) == DL_OK)
+        (void)parse_vt_number(active.tty, &current_vt);
+    count = dl_manager_get_session_count(userdata);
+    for (i = 0; i < count; i++) {
+        dl_session_properties p = {0};
+        if (dl_manager_get_session_at(userdata, i, &p) != DL_OK)
+            return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+                "Could not enumerate Sessions");
+        if (p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0 ||
+            parse_vt_number(p.tty, &candidate_vt) < 0)
+            continue;
+        if (direction > 0) {
+            if (candidate_vt > current_vt &&
+                (selected_vt == 0U || candidate_vt < selected_vt))
+                selected_vt = candidate_vt;
+        } else {
+            if (candidate_vt < current_vt && candidate_vt > selected_vt)
+                selected_vt = candidate_vt;
+        }
+    }
+    if (selected_vt == 0U) {
+        /* Wrap to the lowest/highest registered VT on this Seat. */
+        for (i = 0; i < count; i++) {
+            dl_session_properties p = {0};
+            if (dl_manager_get_session_at(userdata, i, &p) != DL_OK)
+                return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+                    "Could not enumerate Sessions");
+            if (p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0 ||
+                parse_vt_number(p.tty, &candidate_vt) < 0)
+                continue;
+            if (selected_vt == 0U ||
+                (direction > 0 && candidate_vt < selected_vt) ||
+                (direction < 0 && candidate_vt > selected_vt))
+                selected_vt = candidate_vt;
+        }
+    }
+    if (selected_vt == 0U || selected_vt == current_vt)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
+            "No other registered VT Session is available");
+    r = switch_to_vt(sd_bus_message_get_bus(m), userdata, seat_id, selected_vt);
+    if (r == -EOPNOTSUPP)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
+            "Virtual terminal switching is unavailable on this Seat");
+    if (r < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+            "VT switch failed (%d)", r);
+    return sd_bus_reply_method_return(m, "");
+}
+
+static int method_seat_switch_next(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    (void)error;
+    return method_seat_switch_relative(m, userdata, 1);
+}
+
+static int method_seat_switch_previous(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    (void)error;
+    return method_seat_switch_relative(m, userdata, -1);
+}
+
 static int method_seat_switch_to(sd_bus_message *m, void *userdata,
     sd_bus_error *error)
 {
@@ -914,6 +1005,8 @@ static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_PROPERTY("Sessions","a(so)",prop_seat_sessions,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_METHOD("ActivateSession","s","",method_seat_activate_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("SwitchTo","u","",method_seat_switch_to,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("SwitchToNext","","",method_seat_switch_next,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("SwitchToPrevious","","",method_seat_switch_previous,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
 

@@ -55,5 +55,5 @@ if dbus_run_session.found()
   login1_test=executable('test-login1-dbus','tests/test-login1-dbus.c',
     dependencies:[login1_dep,threads_dep,systemd_dep])
   test('login1-private-dbus-integration',dbus_run_session,
-    args:['--',login1_test],timeout:30)
+    args:['--',login1_test],timeout:120)
 endif

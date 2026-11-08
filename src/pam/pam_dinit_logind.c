@@ -79,7 +79,8 @@ static int new_id(char out[65])
     while(done<sizeof(b)){
         ssize_t n=getrandom(b+done,sizeof(b)-done,0);
         if(n<0&&errno==EINTR)continue;
-        if(n<=0)return -1; done+=(size_t)n;
+        if (n <= 0) return -1;
+        done += (size_t)n;
     }
     memcpy(out,"pam-",4);
     for(i=0;i<sizeof(b);i++){out[4+2*i]=h[b[i]>>4];out[5+2*i]=h[b[i]&15];}

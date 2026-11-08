@@ -39,3 +39,29 @@ jobs:
             meson setup build --buildtype=debug
             meson compile -C build
             meson test -C build --print-errorlogs --no-rebuild
+
+  i686:
+    name: i686 / Debian 12 / GCC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable 32-bit x86 emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: i386
+      - name: Build and test on 32-bit x86 under QEMU
+        run: |
+          docker run --rm --platform linux/386 \
+            -v "${PWD}:/src" -w /src i386/debian:bookworm-slim \
+            sh -ec '
+              test "$(getconf LONG_BIT)" = 32
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential gcc meson ninja-build pkg-config \
+                libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+              gcc --version
+              meson setup build --buildtype=debug
+              meson compile -C build
+              meson test -C build --print-errorlogs --no-rebuild
+            '

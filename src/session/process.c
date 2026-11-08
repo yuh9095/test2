@@ -21,7 +21,10 @@ static bool valid_relative_path(const char *path)
 
     if (path == NULL) { errno = EINVAL; return false; }
     length = strlen(path);
-    if (length == 0U || length > 4095U || path[0] == '/') return false;
+    if (length == 0U || length > 4095U || path[0] == '/') {
+        errno = EINVAL;
+        return false;
+    }
     component = path;
     for (const char *cursor = path; ; cursor++) {
         unsigned char ch = (unsigned char) *cursor;

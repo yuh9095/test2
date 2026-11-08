@@ -5,9 +5,22 @@ A login, session, seat, and device-management service for systems using
 
 [简体中文](README.zh-CN.md)
 
-> **Status: initial project setup.** The architecture and source-code provenance
-> are being evaluated. This repository does not yet provide a working logind
-> implementation.
+> **Status: early development.** The repository contains an initial C11 core
+> model and unit tests. It is not yet a working login1 D-Bus service and does
+> not yet integrate Turnstile, seatd/libseat, elogind-compatible APIs, or eudev.
+
+## Build and test
+
+Requirements: a C11 compiler, Meson, and Ninja.
+
+```sh
+meson setup build
+meson compile -C build
+meson test -C build --print-errorlogs
+```
+
+The build uses strict ISO C11 mode (`-std=c11`), not GNU11. GitHub Actions
+builds and tests with both GCC and Clang.
 
 ## Project direction
 
@@ -46,6 +59,17 @@ three independent session/seat managers side by side.
 8. Design for both glibc and musl.
 9. Audit source provenance, licenses, and dependency boundaries before
    importing code from upstream projects.
+
+## Current core scope
+
+The initial core in `src/core/manager.c` provides one in-process model for
+Seats, Sessions, devices, active-session selection, device identity
+generations, and logical per-session device claims. It owns copied object
+identifiers and enforces lifecycle constraints.
+
+Logical device claims are not yet real device opens or Unix file-descriptor
+handoffs. Those operations will be implemented in the seatd/libseat adapter.
+The core currently has no D-Bus, PAM, udev, seatd, or systemd dependency.
 
 ## Planned internal areas
 

@@ -26,9 +26,6 @@ static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
     const char *seat_id, const char *session_id);
 static int seat_lookup(const char *path, void *userdata, char *id, size_t cap);
 
-static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
-    const char *seat_id, const char *session_id);
-
 static int make_path(const char *prefix, const char *id, char *out, size_t cap)
 {
     static const char hex[] = "0123456789abcdef";

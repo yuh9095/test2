@@ -19,15 +19,19 @@ session_lib=static_library('dinit-logind-session-registration',
   dependencies:core_dep,include_directories:include_directories('src'),install:false)
 session_dep=declare_dependency(link_with:session_lib,dependencies:core_dep,
   include_directories:include_directories('src'))
+vt_lib=static_library('dinit-logind-vt',files('src/platform/linux/vt.c'),
+  include_directories:include_directories('src'),install:false)
+vt_dep=declare_dependency(link_with:vt_lib,
+  include_directories:include_directories('src'))
 platform_lib=static_library('dinit-logind-linux-platform',
-  files('src/platform/linux/udev.c','src/platform/linux/udev-manager.c','src/platform/linux/vt.c'),
+  files('src/platform/linux/udev.c','src/platform/linux/udev-manager.c'),
   dependencies:udev_dep,include_directories:include_directories('src'),install:false)
-platform_dep=declare_dependency(link_with:platform_lib,dependencies:[udev_dep,core_dep],
+platform_dep=declare_dependency(link_with:platform_lib,dependencies:[udev_dep,core_dep,vt_dep],
   include_directories:include_directories('src'))
 login1_lib=static_library('dinit-logind-login1',files('src/dbus/login1.c'),
-  dependencies:[systemd_dep,core_dep,platform_dep],include_directories:include_directories('src'),install:false)
+  dependencies:[systemd_dep,core_dep,vt_dep],include_directories:include_directories('src'),install:false)
 login1_dep=declare_dependency(link_with:login1_lib,
-  dependencies:[systemd_dep,core_dep,platform_dep],include_directories:include_directories('src'))
+  dependencies:[systemd_dep,core_dep,vt_dep],include_directories:include_directories('src'))
 daemon=executable('dinit-logind','src/daemon/main.c',
   dependencies:[platform_dep,session_dep,login1_dep],install:true)
 if pam_lib.found() and pam_header

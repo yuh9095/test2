@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "dbus/login1.h"
+#include "platform/linux/vt.h"
 #include <systemd/sd-bus.h>
 #include <errno.h>
 #include <pwd.h>
@@ -20,6 +21,10 @@ struct dl_login1 {
     sd_bus_slot *seat_slot;
     sd_bus_slot *user_slot;
 };
+
+static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
+    const char *seat_id, const char *session_id);
+static int seat_lookup(const char *path, void *userdata, char *id, size_t cap);
 
 static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
     const char *seat_id, const char *session_id);
@@ -355,6 +360,126 @@ static int prop_session_leader(sd_bus *b,const char *p,const char *i,const char 
     return sd_bus_message_append(m,"u",s.leader_pid);
 }
 
+static int parse_vt_number(const char *tty, unsigned int *out_number)
+{
+    const char *digits;
+    char *end = NULL;
+    unsigned long value;
+    if (tty == NULL || out_number == NULL) return -EINVAL;
+    if (strncmp(tty, "/dev/tty", 8U) == 0) digits = tty + 8U;
+    else if (strncmp(tty, "tty", 3U) == 0) digits = tty + 3U;
+    else return -ENOENT;
+    if (*digits == '\0') return -EINVAL;
+    value = strtoul(digits, &end, 10);
+    if (end == digits || *end != '\0' || value == 0U || value > 63U)
+        return -EINVAL;
+    *out_number = (unsigned int)value;
+    return 0;
+}
+
+static int prop_session_vtnr(sd_bus *b, const char *path,
+    const char *interface, const char *property, sd_bus_message *reply,
+    void *userdata, sd_bus_error *error)
+{
+    dl_session_properties p = {0};
+    unsigned int number = 0U;
+    int r;
+    (void)b; (void)interface; (void)property; (void)error;
+    if ((r = session_lookup(path, userdata, &p)) < 0) return r;
+    if (p.tty != NULL) (void)parse_vt_number(p.tty, &number);
+    return sd_bus_message_append(reply, "u", number);
+}
+
+static int switch_to_vt(sd_bus *bus, dl_manager *manager,
+    const char *seat_id, unsigned int vt_number)
+{
+    dl_vt *vt = NULL;
+    dl_vt_result vr;
+    size_t i, count;
+    char old_id[128] = "";
+    const char *old_active = NULL;
+    int r;
+    if (strcmp(seat_id, "seat0") != 0) return -EOPNOTSUPP;
+    vr = dl_vt_open("/dev/tty0", &vt);
+    if (vr != DL_VT_OK) return -EOPNOTSUPP;
+    vr = dl_vt_activate(vt, vt_number);
+    if (vr == DL_VT_OK) vr = dl_vt_wait_active(vt, vt_number);
+    dl_vt_close(vt);
+    if (vr != DL_VT_OK) return -EOPNOTSUPP;
+
+    if (dl_manager_get_active_session(manager, seat_id, &old_active) == DL_OK &&
+        old_active != NULL) {
+        if (snprintf(old_id, sizeof(old_id), "%s", old_active) >=
+            (int)sizeof(old_id)) return -ENAMETOOLONG;
+    }
+    count = dl_manager_get_session_count(manager);
+    for (i = 0; i < count; i++) {
+        dl_session_properties p = {0};
+        unsigned int candidate = 0U;
+        if (dl_manager_get_session_at(manager, i, &p) != DL_OK)
+            return -EIO;
+        if (p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0 ||
+            parse_vt_number(p.tty, &candidate) < 0 ||
+            candidate != vt_number) continue;
+        return activate_session_on_seat(bus, manager, seat_id, p.session_id);
+    }
+    r = dl_manager_set_active_session(manager, seat_id, NULL);
+    if (r != DL_OK) return -EINVAL;
+    {
+        char seat_path[256], session_path[256];
+        if ((r = make_path(SEAT_PATH, seat_id, seat_path,
+                sizeof(seat_path))) < 0) return r;
+        if ((r = sd_bus_emit_properties_changed(bus, seat_path,
+                BUS_NAME ".Seat", "ActiveSession", NULL)) < 0) return r;
+        if (old_id[0] != '\0') {
+            if ((r = make_path(SESSION_PATH, old_id, session_path,
+                    sizeof(session_path))) < 0) return r;
+            return sd_bus_emit_properties_changed(bus, session_path,
+                BUS_NAME ".Session", "Active", NULL);
+        }
+    }
+    return 0;
+}
+
+static int method_seat_switch_to(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    char seat_id[128];
+    uint32_t vt_number = 0U;
+    sd_bus_creds *creds = NULL;
+    uid_t euid;
+    int r;
+    (void)error;
+    if ((r = seat_lookup(sd_bus_message_get_path(m), userdata, seat_id,
+            sizeof(seat_id))) < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "Seat does not exist");
+    if ((r = sd_bus_message_read(m, "u", &vt_number)) < 0) return r;
+    if (vt_number == 0U || vt_number > 63U)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_INVALID_ARGS,
+            "VT number must be between 1 and 63");
+    if ((r = sd_bus_query_sender_creds(m, SD_BUS_CREDS_EUID, &creds)) < 0)
+        return r;
+    if ((r = sd_bus_creds_get_euid(creds, &euid)) < 0) {
+        sd_bus_creds_unref(creds);
+        return r;
+    }
+    sd_bus_creds_unref(creds);
+    if (euid != 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Only root may switch virtual terminals");
+    r = switch_to_vt(sd_bus_message_get_bus(m), userdata, seat_id,
+        (unsigned int)vt_number);
+    if (r == -EOPNOTSUPP)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
+            "Virtual terminal switching is unavailable on this Seat");
+    if (r < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+            "VT switch failed (%d)", r);
+    return sd_bus_reply_method_return(m, "");
+}
+
+
 static int seat_lookup(const char *path, void *userdata, char *id, size_t cap)
 {
     size_t i; const char *known = NULL; int r;
@@ -630,6 +755,7 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_PROPERTY("Service","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Desktop","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Leader","u",prop_session_leader,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("VTNr","u",prop_session_vtnr,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Type","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Class","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Active","b",prop_session_bool,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
@@ -660,6 +786,7 @@ static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_PROPERTY("CanGraphical","b",prop_seat_capability,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_PROPERTY("Sessions","a(so)",prop_seat_sessions,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_METHOD("ActivateSession","s","",method_seat_activate_session,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("SwitchTo","u","",method_seat_switch_to,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
 

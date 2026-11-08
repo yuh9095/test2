@@ -23,7 +23,7 @@ Session：
   和 inactive 标志。
 - `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。
 
-Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑活动 Session，并发送 Seat/Session 属性变化通知。物理 VT 切换仍由独立 VT adapter 后续接入。
+Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑活动 Session 并发送属性变化通知；`SwitchTo(vtnr)` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，容器没有可用 VT 时返回 NotSupported。Session 增加 `VTNr` 属性。
 User：新增最小对象，导出 UID、Name。
 
 对象路径中的非字母数字字符采用十六进制转义。Session 的 User 属性现在指向已导出的

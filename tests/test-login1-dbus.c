@@ -96,6 +96,17 @@ int main(void)
 
     call_ok(client,object_path,"org.freedesktop.login1.Session","Activate","");
     assert(dl_manager_session_is_active(manager,"test-session"));
+
+    r=sd_bus_get_property(client,"org.freedesktop.login1",object_path,
+        "org.freedesktop.login1.Session","VTNr",&error,&reply,"u");
+    assert(r>=0);
+    {
+        uint32_t vtnr=99U;
+        assert(sd_bus_message_read(reply,"u",&vtnr)>=0);
+        assert(vtnr==0U);
+    }
+    sd_bus_message_unref(reply);
+    reply=NULL;
     call_ok(client,"/org/freedesktop/login1/seat/seat0",
         "org.freedesktop.login1.Seat","ActivateSession","s","test-session");
     call_ok(client,object_path,"org.freedesktop.login1.Session","Lock","");

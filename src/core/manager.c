@@ -61,6 +61,7 @@ struct dl_manager {
     dl_seat *seats;
     dl_session *sessions;
     uint64_t next_generation;
+    void *adapter_userdata;
 };
 
 static char *copy_string(const char *value)
@@ -264,6 +265,16 @@ static void remove_claims_for_device(
             }
         }
     }
+}
+
+void dl_manager_set_adapter_userdata(dl_manager *manager, void *userdata)
+{
+    if (manager != NULL) manager->adapter_userdata = userdata;
+}
+
+void *dl_manager_get_adapter_userdata(const dl_manager *manager)
+{
+    return manager == NULL ? NULL : manager->adapter_userdata;
 }
 
 dl_error dl_manager_create(dl_manager **out_manager)

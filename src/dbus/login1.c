@@ -1054,9 +1054,8 @@ static int method_session_terminate(sd_bus_message *m, void *userdata,
     uint32_t uid;
     const char *sender;
     sd_bus_creds *creds = NULL;
-    dl_login1 *service = sd_bus_get_userdata(sd_bus_message_get_bus(m));
+    dl_login1 *service = dl_manager_get_adapter_userdata(userdata);
     int r;
-    (void) userdata;
     (void) error;
     if (service == NULL ||
         auth_session(m, service->manager, id, sizeof(id), &uid,
@@ -1077,10 +1076,9 @@ static int method_manager_terminate_session(sd_bus_message *m, void *userdata,
     const char *session_id = NULL;
     dl_session_properties p = {0};
     sd_bus_creds *creds = NULL;
-    dl_login1 *service = sd_bus_get_userdata(sd_bus_message_get_bus(m));
+    dl_login1 *service = dl_manager_get_adapter_userdata(userdata);
     uid_t euid;
     int r;
-    (void) userdata;
     (void) error;
     if (service == NULL)
         return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
@@ -1234,8 +1232,7 @@ static int login1_open_internal(dl_login1 **out, dl_manager *manager,
     }
     if (r<0) goto fail;
     s->manager = manager;
-    r = sd_bus_set_userdata(s->bus, s);
-    if (r < 0) goto fail;
+    dl_manager_set_adapter_userdata(manager, s);
     r=sd_bus_add_object_vtable(s->bus,&s->manager_slot,ROOT_PATH,
         BUS_NAME ".Manager",manager_vtable,manager); if (r<0) goto fail;
     r=sd_bus_add_fallback_vtable(s->bus,&s->session_slot,SESSION_PATH,
@@ -1296,6 +1293,9 @@ void dl_login1_close(dl_login1 *s)
         s->terminations = item->next;
         termination_free(item);
     }
+    if (s->manager != NULL &&
+        dl_manager_get_adapter_userdata(s->manager) == s)
+        dl_manager_set_adapter_userdata(s->manager, NULL);
     s->owner_slot=sd_bus_slot_unref(s->owner_slot);
     s->seat_slot=sd_bus_slot_unref(s->seat_slot);
     s->user_slot=sd_bus_slot_unref(s->user_slot);

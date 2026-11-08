@@ -71,6 +71,10 @@ typedef struct dl_session_properties {
 dl_error dl_manager_create(dl_manager **out_manager);
 void dl_manager_destroy(dl_manager *manager);
 
+/* One optional protocol-adapter context; the core never dereferences it. */
+void dl_manager_set_adapter_userdata(dl_manager *manager, void *userdata);
+void *dl_manager_get_adapter_userdata(const dl_manager *manager);
+
 dl_error dl_manager_add_seat(dl_manager *manager, const char *seat_id);
 dl_error dl_manager_remove_seat(dl_manager *manager, const char *seat_id);
 

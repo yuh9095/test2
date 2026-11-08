@@ -255,8 +255,13 @@ jobs:
             "https://github.com/${GITHUB_REPOSITORY}.git" .
           git checkout --detach "${GITHUB_SHA}"
 
-      - name: Record native execution environment
+      - name: Assert native CPU architecture and record environment
         run: |
+          case "${{ matrix.arch }}" in
+            x86_64) test "$(uname -m)" = x86_64 ;;
+            aarch64) test "$(uname -m)" = aarch64 ;;
+            *) echo "Unexpected architecture: ${{ matrix.arch }}" >&2; exit 2 ;;
+          esac
           uname -a
           getconf LONG_BIT
           cat /etc/os-release

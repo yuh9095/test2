@@ -1,0 +1,55 @@
+name: C11 Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test ( ${{ matrix.compiler }} )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - gcc
+          - clang
+    env:
+      CC: ${{ matrix.compiler }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build
+          python3 -m pip install --user meson
+
+      - name: Configure strict C11 build
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          meson setup build
+
+      - name: Compile
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          meson compile -C build
+
+      - name: Run unit tests
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          meson test -C build --print-errorlogs

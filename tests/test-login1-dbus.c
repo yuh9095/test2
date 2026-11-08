@@ -172,10 +172,23 @@ int main(void)
     reply=NULL;
     call_ok(client,"/org/freedesktop/login1/seat/seat0",
         "org.freedesktop.login1.Seat","ActivateSession","s","test-session");
-    call_not_supported(client,"/org/freedesktop/login1/seat/seat0",
-        "org.freedesktop.login1.Seat","SwitchToNext","");
-    call_not_supported(client,"/org/freedesktop/login1/seat/seat0",
-        "org.freedesktop.login1.Seat","SwitchToPrevious","");
+    /* Relative VT switching is privileged. This integration test normally
+     * runs as an unprivileged CI user, so verify the authorization boundary
+     * rather than incorrectly expecting the post-authorization capability
+     * error. */
+    if (geteuid() == 0) {
+        call_not_supported(client,"/org/freedesktop/login1/seat/seat0",
+            "org.freedesktop.login1.Seat","SwitchToNext","");
+        call_not_supported(client,"/org/freedesktop/login1/seat/seat0",
+            "org.freedesktop.login1.Seat","SwitchToPrevious","");
+    } else {
+        call_error_name(client,"/org/freedesktop/login1/seat/seat0",
+            "org.freedesktop.login1.Seat","SwitchToNext",
+            SD_BUS_ERROR_ACCESS_DENIED,"");
+        call_error_name(client,"/org/freedesktop/login1/seat/seat0",
+            "org.freedesktop.login1.Seat","SwitchToPrevious",
+            SD_BUS_ERROR_ACCESS_DENIED,"");
+    }
     call_ok(client,object_path,"org.freedesktop.login1.Session","Lock","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","Unlock","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","TakeControl","b",0);

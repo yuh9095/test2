@@ -34,7 +34,7 @@ jobs:
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
             -v "${{ github.workspace }}:/src" -w /src alpine:edge sh -ec '
-              apk add --no-cache build-base meson ninja eudev-dev elogind-dev linux-headers
+              apk add --no-cache build-base meson ninja eudev-dev elogind-dev dbus linux-headers
               meson setup build
               meson compile -C build
               meson test -C build --print-errorlogs
@@ -57,7 +57,7 @@ jobs:
           distro: alpine_latest
           githubToken: ${{ github.token }}
           install: |
-            apk add --no-cache build-base meson ninja eudev-dev elogind-dev linux-headers
+            apk add --no-cache build-base meson ninja eudev-dev elogind-dev dbus linux-headers
           run: |
             meson setup build
             meson compile -C build

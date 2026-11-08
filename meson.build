@@ -3,6 +3,8 @@ project('dinit-logind','c',version:'0.1.0',meson_version:'>= 0.60.0',
 udev_dep=dependency('libudev')
 systemd_dep=dependency('libsystemd')
 cc=meson.get_compiler('c')
+threads_dep=dependency('threads')
+dbus_run_session=find_program('dbus-run-session',required:false)
 pam_lib=cc.find_library('pam',required:false)
 pam_header=cc.has_header('security/pam_modules.h')
 pam_lifecycle_lib=static_library('dinit-logind-pam-lifecycle',
@@ -48,3 +50,10 @@ test('udev-manager-integration',udev_test,timeout:30)
 
 pam_lifecycle_test=executable('test-pam-lifecycle','tests/test-pam-lifecycle.c',dependencies:pam_lifecycle_dep)
 test('pam-session-lifecycle',pam_lifecycle_test,timeout:30)
+
+if dbus_run_session.found()
+  login1_test=executable('test-login1-dbus','tests/test-login1-dbus.c',
+    dependencies:[login1_dep,threads_dep,systemd_dep])
+  test('login1-private-dbus-integration',dbus_run_session,
+    args:['--',login1_test],timeout:30)
+endif

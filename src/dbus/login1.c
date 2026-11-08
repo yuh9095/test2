@@ -446,13 +446,22 @@ static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_VTABLE_END
 };
 
-int dl_login1_open(dl_login1 **out, dl_manager *manager)
+static int login1_open_internal(dl_login1 **out, dl_manager *manager,
+    const char *address)
 {
     dl_login1 *s; int r;
     if (!out || !manager) return -EINVAL;
     *out=NULL;
     s=calloc(1,sizeof(*s)); if (!s) return -ENOMEM;
-    r=sd_bus_open_system(&s->bus); if (r<0) goto fail;
+    if (address == NULL) {
+        r=sd_bus_open_system(&s->bus);
+    } else {
+        r=sd_bus_new(&s->bus);
+        if (r >= 0) r=sd_bus_set_address(s->bus,address);
+        if (r >= 0) r=sd_bus_set_bus_client(s->bus,1);
+        if (r >= 0) r=sd_bus_start(s->bus);
+    }
+    if (r<0) goto fail;
     r=sd_bus_add_object_vtable(s->bus,&s->manager_slot,ROOT_PATH,
         BUS_NAME ".Manager",manager_vtable,manager); if (r<0) goto fail;
     r=sd_bus_add_fallback_vtable(s->bus,&s->session_slot,SESSION_PATH,
@@ -464,6 +473,16 @@ int dl_login1_open(dl_login1 **out, dl_manager *manager)
     *out=s; return 0;
 fail:
     dl_login1_close(s); return r;
+}
+int dl_login1_open(dl_login1 **out, dl_manager *manager)
+{
+    return login1_open_internal(out, manager, NULL);
+}
+int dl_login1_open_address(dl_login1 **out, dl_manager *manager,
+    const char *address)
+{
+    if (address == NULL || address[0] == '\0') return -EINVAL;
+    return login1_open_internal(out, manager, address);
 }
 int dl_login1_get_fd(const dl_login1 *s)
 { return s && s->bus ? sd_bus_get_fd(s->bus) : -1; }

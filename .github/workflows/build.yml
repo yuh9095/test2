@@ -38,7 +38,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes meson ninja-build libudev-dev libpam0g-dev libsystemd-dev
+          sudo apt-get install --yes meson ninja-build libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
       - name: Configure
         run: meson setup build
       - name: Compile

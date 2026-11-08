@@ -43,3 +43,16 @@ User 对象路径。
 
 默认启动需要系统总线运行，且不能有其他服务占用 `org.freedesktop.login1`。
 `--no-login1` 可用于不启动 D-Bus 的核心/设备适配器调试。
+
+
+## 私有 D-Bus 集成测试
+
+构建系统在检测到 `dbus-run-session` 时会注册
+`login1-private-dbus-integration` 测试。测试使用临时会话总线启动
+login1 服务端和独立客户端，不占用宿主机的系统总线，也不需要运行
+systemd 或 systemd-logind。
+
+该测试覆盖 Manager.GetSession/ListSessions、Session.Activate、
+Lock/Unlock、TakeControl/ReleaseControl 的真实 D-Bus 调用路径。
+生产入口 `dl_login1_open()` 仍连接系统总线；测试专用入口
+`dl_login1_open_address()` 只接受显式 D-Bus 地址。

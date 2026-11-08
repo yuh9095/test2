@@ -15,7 +15,7 @@ core_lib=static_library('dinit-logind-core',files('src/core/manager.c'),
   include_directories:include_directories('src'),install:false)
 core_dep=declare_dependency(link_with:core_lib,include_directories:include_directories('src'))
 session_lib=static_library('dinit-logind-session-registration',
-  files('src/session/registration.c','src/session/socket.c'),
+  files('src/session/registration.c','src/session/socket.c','src/session/process.c'),
   dependencies:core_dep,include_directories:include_directories('src'),install:false)
 session_dep=declare_dependency(link_with:session_lib,dependencies:core_dep,
   include_directories:include_directories('src'))
@@ -47,6 +47,8 @@ reg_test=executable('test-session-registration','tests/test-session-registration
 test('session-registration',reg_test,timeout:30)
 sock_test=executable('test-session-socket','tests/test-session-socket.c',dependencies:session_dep)
 test('session-socket',sock_test,timeout:30)
+process_test=executable('test-session-process','tests/test-session-process.c',dependencies:session_dep)
+test('session-process-safety',process_test,timeout:30)
 plat_test=executable('test-linux-platform','tests/test-linux-platform.c',dependencies:platform_dep)
 test('linux-platform-api',plat_test,timeout:30)
 udev_test=executable('test-udev-manager','tests/test-udev-manager.c',dependencies:platform_dep)

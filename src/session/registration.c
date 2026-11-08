@@ -42,7 +42,7 @@ static bool bytes_are_zero(const char *value, size_t size)
 {
     size_t index;
     for (index = 0U; index < size; index++) {
-        if (value[index] != '\\0') return false;
+        if (value[index] != '\0') return false;
     }
     return true;
 }

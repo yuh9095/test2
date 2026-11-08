@@ -1,7 +1,9 @@
 project('dinit-logind','c',version:'0.1.0',meson_version:'>= 0.60.0',
   default_options:['c_std=c11','warning_level=3','werror=true'])
 udev_dep=dependency('libudev')
-pam_dep=dependency('pam',required:false)
+cc=meson.get_compiler('c')
+pam_lib=cc.find_library('pam',required:false)
+pam_header=cc.has_header('security/pam_modules.h')
 core_lib=static_library('dinit-logind-core',files('src/core/manager.c'),
   include_directories:include_directories('src'),install:false)
 core_dep=declare_dependency(link_with:core_lib,include_directories:include_directories('src'))
@@ -17,9 +19,9 @@ platform_dep=declare_dependency(link_with:platform_lib,dependencies:[udev_dep,co
   include_directories:include_directories('src'))
 daemon=executable('dinit-logind','src/daemon/main.c',
   dependencies:[platform_dep,session_dep],install:true)
-if pam_dep.found()
+if pam_lib.found() and pam_header
   shared_module('pam_dinit_logind','src/pam/pam_dinit_logind.c',
-    dependencies:pam_dep,include_directories:include_directories('src'),
+    dependencies:pam_lib,include_directories:include_directories('src'),
     name_prefix:'',install:true,install_dir:join_paths(get_option('libdir'),'security'))
 endif
 test('daemon-help',daemon,args:['--help'],timeout:10)

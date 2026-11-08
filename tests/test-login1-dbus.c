@@ -8,7 +8,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <stdarg.h>
-#include <stdatomic.h>\n#include <time.h>
+#include <stdatomic.h>
+#include <time.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -98,7 +99,7 @@ int main(void)
     const char *address=getenv("DBUS_SESSION_BUS_ADDRESS");
     dl_manager *manager=NULL;
     dl_login1 *login1=NULL;
-    sd_bus *client=NULL, *controller_client=NULL;
+    sd_bus *client=NULL;
     pthread_t thread;
     service_state state={0};
     sd_bus_error error=SD_BUS_ERROR_NULL;

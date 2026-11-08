@@ -265,7 +265,7 @@ int dl_session_cgroup_kill_pinned(int cgroup_fd)
             errno = ENOTSUP;
         return -1;
     }
-    do { written = write(fd, "1\\n", 2U); }
+    do { written = write(fd, "1\n", 2U); }
     while (written < 0 && errno == EINTR);
     if (written != 2) {
         int saved_errno = written < 0 ? errno : EIO;

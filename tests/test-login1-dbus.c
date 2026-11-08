@@ -124,7 +124,7 @@ int main(void)
     const char *object_path_value=NULL;
     char object_path[256];
     int r;
-    pid_t kill_child, terminate_child, manager_terminate_child;
+    pid_t kill_child, terminate_child, manager_terminate_child, seat_child;
     dl_session_properties kill_properties = {0};
     dl_session_properties session_properties = {0};
     dl_session_properties termination_properties = {0};
@@ -158,7 +158,7 @@ int main(void)
     assert(dl_manager_add_session_with_properties(manager,"manager-term-test",
         (uint32_t)getuid(),&termination_properties)==DL_OK);
     {
-        pid_t seat_child = fork();
+        seat_child = fork();
         assert(seat_child >= 0);
         if (seat_child == 0) { for (;;) pause(); }
         termination_properties.seat_id = "seat-test";
@@ -300,6 +300,11 @@ int main(void)
         call_error_name(client, "/org/freedesktop/login1/seat/seat-test",
             "org.freedesktop.login1.Seat", "Terminate",
             SD_BUS_ERROR_ACCESS_DENIED, "");
+        {
+            int status = 0;
+            assert(kill(seat_child, SIGKILL) == 0);
+            assert(waitpid(seat_child, &status, 0) == seat_child);
+        }
     }
 
     /* Manager.TerminateSession escalates to SIGKILL after the grace period

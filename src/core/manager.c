@@ -40,6 +40,14 @@ typedef struct dl_session {
     char *id;
     char *seat_id;
     uint32_t uid;
+    uint32_t leader_pid;
+    bool remote;
+    char *type;
+    char *class_name;
+    char *service;
+    char *desktop;
+    char *tty;
+    char *display;
     char *controller_id;
     dl_claim *claims;
     struct dl_session *next;
@@ -84,6 +92,21 @@ static dl_seat *find_seat(const dl_manager *manager, const char *seat_id)
     return NULL;
 }
 
+static dl_seat *find_session_seat(
+    const dl_manager *manager,
+    const dl_session *session)
+{
+    if (session == NULL || session->seat_id == NULL) {
+        return NULL;
+    }
+    return find_session_seat(manager, session);
+}
+
+static char *copy_optional_string(const char *value)
+{
+    return value == NULL ? NULL : copy_string(value);
+}
+
 static dl_session *find_session(
     const dl_manager *manager,
     const char *session_id)
@@ -105,6 +128,9 @@ static dl_device *find_device(
 {
     dl_device *device;
 
+    if (seat == NULL) {
+        return NULL;
+    }
     for (device = seat->devices; device != NULL; device = device->next) {
         if (device->major_number == major_number &&
             device->minor_number == minor_number) {
@@ -233,6 +259,12 @@ void dl_manager_destroy(dl_manager *manager)
         free_claims(session->claims);
         free(session->id);
         free(session->seat_id);
+        free(session->type);
+        free(session->class_name);
+        free(session->service);
+        free(session->desktop);
+        free(session->tty);
+        free(session->display);
         free(session->controller_id);
         free(session);
         session = next;
@@ -284,7 +316,8 @@ dl_error dl_manager_remove_seat(dl_manager *manager, const char *seat_id)
                 return DL_ERROR_BUSY;
             }
             for (session = manager->sessions; session != NULL; session = session->next) {
-                if (strcmp(session->seat_id, seat_id) == 0) {
+                if (session->seat_id != NULL &&
+                    strcmp(session->seat_id, seat_id) == 0) {
                     return DL_ERROR_BUSY;
                 }
             }
@@ -373,22 +406,27 @@ dl_error dl_manager_remove_device(
     return DL_ERROR_NOT_FOUND;
 }
 
-dl_error dl_manager_add_session(
+dl_error dl_manager_add_session_with_properties(
     dl_manager *manager,
     const char *session_id,
     uint32_t uid,
-    const char *seat_id)
+    const dl_session_properties *properties)
 {
     dl_session *session;
+    const char *seat_id;
 
     if (manager == NULL || session_id == NULL || session_id[0] == '\0' ||
-        seat_id == NULL || seat_id[0] == '\0') {
+        properties == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    seat_id = properties->seat_id;
+    if (seat_id != NULL && seat_id[0] == '\0') {
         return DL_ERROR_INVALID_ARGUMENT;
     }
     if (find_session(manager, session_id) != NULL) {
         return DL_ERROR_ALREADY_EXISTS;
     }
-    if (find_seat(manager, seat_id) == NULL) {
+    if (seat_id != NULL && find_seat(manager, seat_id) == NULL) {
         return DL_ERROR_NOT_FOUND;
     }
 
@@ -397,16 +435,81 @@ dl_error dl_manager_add_session(
         return DL_ERROR_NO_MEMORY;
     }
     session->id = copy_string(session_id);
-    session->seat_id = copy_string(seat_id);
-    if (session->id == NULL || session->seat_id == NULL) {
+    session->seat_id = copy_optional_string(seat_id);
+    session->type = copy_optional_string(properties->type);
+    session->class_name = copy_optional_string(properties->class_name);
+    session->service = copy_optional_string(properties->service);
+    session->desktop = copy_optional_string(properties->desktop);
+    session->tty = copy_optional_string(properties->tty);
+    session->display = copy_optional_string(properties->display);
+    if (session->id == NULL ||
+        (seat_id != NULL && session->seat_id == NULL) ||
+        (properties->type != NULL && session->type == NULL) ||
+        (properties->class_name != NULL && session->class_name == NULL) ||
+        (properties->service != NULL && session->service == NULL) ||
+        (properties->desktop != NULL && session->desktop == NULL) ||
+        (properties->tty != NULL && session->tty == NULL) ||
+        (properties->display != NULL && session->display == NULL)) {
         free(session->id);
         free(session->seat_id);
+        free(session->type);
+        free(session->class_name);
+        free(session->service);
+        free(session->desktop);
+        free(session->tty);
+        free(session->display);
         free(session);
         return DL_ERROR_NO_MEMORY;
     }
+
     session->uid = uid;
+    session->leader_pid = properties->leader_pid;
+    session->remote = properties->remote;
     session->next = manager->sessions;
     manager->sessions = session;
+    return DL_OK;
+}
+
+dl_error dl_manager_add_session(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t uid,
+    const char *seat_id)
+{
+    dl_session_properties properties = {0};
+
+    properties.seat_id = seat_id;
+    properties.type = "unspecified";
+    properties.class_name = "user";
+    return dl_manager_add_session_with_properties(
+        manager, session_id, uid, &properties);
+}
+
+dl_error dl_manager_get_session_properties(
+    const dl_manager *manager,
+    const char *session_id,
+    dl_session_properties *out_properties)
+{
+    const dl_session *session;
+
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0' ||
+        out_properties == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+
+    out_properties->seat_id = session->seat_id;
+    out_properties->type = session->type;
+    out_properties->class_name = session->class_name;
+    out_properties->service = session->service;
+    out_properties->desktop = session->desktop;
+    out_properties->tty = session->tty;
+    out_properties->display = session->display;
+    out_properties->leader_pid = session->leader_pid;
+    out_properties->remote = session->remote;
     return DL_OK;
 }
 
@@ -422,7 +525,7 @@ dl_error dl_manager_remove_session(dl_manager *manager, const char *session_id)
     while (*cursor != NULL) {
         dl_session *session = *cursor;
         if (strcmp(session->id, session_id) == 0) {
-            dl_seat *seat = find_seat(manager, session->seat_id);
+            dl_seat *seat = find_session_seat(manager, session);
             if (seat != NULL && seat->active_session_id != NULL &&
                 strcmp(seat->active_session_id, session_id) == 0) {
                 free(seat->active_session_id);
@@ -432,6 +535,12 @@ dl_error dl_manager_remove_session(dl_manager *manager, const char *session_id)
             free_claims(session->claims);
             free(session->id);
             free(session->seat_id);
+            free(session->type);
+            free(session->class_name);
+            free(session->service);
+            free(session->desktop);
+            free(session->tty);
+            free(session->display);
             free(session);
             return DL_OK;
         }
@@ -462,7 +571,8 @@ dl_error dl_manager_set_active_session(
             return DL_ERROR_INVALID_ARGUMENT;
         }
         session = find_session(manager, session_id);
-        if (session == NULL || strcmp(session->seat_id, seat_id) != 0) {
+        if (session == NULL || session->seat_id == NULL ||
+            strcmp(session->seat_id, seat_id) != 0) {
             return DL_ERROR_INVALID_STATE;
         }
         replacement = copy_string(session_id);
@@ -490,7 +600,7 @@ bool dl_manager_session_is_active(
     if (session == NULL) {
         return false;
     }
-    seat = find_seat(manager, session->seat_id);
+    seat = find_session_seat(manager, session);
     return seat != NULL && seat->active_session_id != NULL &&
         strcmp(seat->active_session_id, session_id) == 0;
 }
@@ -518,7 +628,7 @@ dl_error dl_manager_claim_device(
     if (session == NULL) {
         return DL_ERROR_NOT_FOUND;
     }
-    seat = find_seat(manager, session->seat_id);
+    seat = find_session_seat(manager, session);
     if (seat == NULL) {
         return DL_ERROR_INVALID_STATE;
     }
@@ -928,7 +1038,7 @@ dl_error dl_manager_take_device_fd(
         strcmp(session->controller_id, connection_id) != 0) {
         return DL_ERROR_INVALID_STATE;
     }
-    device = find_device(find_seat(manager, session->seat_id),
+    device = find_device(find_session_seat(manager, session),
         major_number, minor_number);
     if (device == NULL) {
         return DL_ERROR_NOT_FOUND;
@@ -986,7 +1096,7 @@ dl_error dl_manager_resume_device_fd(
         return DL_ERROR_INVALID_STATE;
     }
     claim = find_claim(session, major_number, minor_number);
-    device = find_device(find_seat(manager, session->seat_id),
+    device = find_device(find_session_seat(manager, session),
         major_number, minor_number);
     if (claim == NULL || device == NULL ||
         claim->pause_state != DL_DEVICE_PAUSED) {

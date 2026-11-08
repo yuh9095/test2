@@ -44,7 +44,7 @@ meson test -C build --print-errorlogs
 
 ## 当前实现范围
 
-核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。
+核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。 Session 支持可选 Seat，并保存 type/class、PAM service、desktop、TTY、display、leader PID 和 remote 标志，因此 SSH、无头及后台会话不必伪装成图形 Seat 会话。
 
 Linux 平台层通过 libudev 枚举设备并监听 eudev 热插拔事件。Seat 适配层应用调用者提供的策略，缓存 syspath 到 Seat 的映射以保证设备移除时能找到原记录，并将经过设备身份校验的字符设备节点注册到核心。前台 `dinit-logind` 守护进程目前接纳 `tty`、`drm` 和 `input` 子系统设备：优先使用明确的 `ID_SEAT` 属性；管理员也可以通过可选参数 `--default-seat ID`，将没有 `ID_SEAT` 的受支持设备分配给指定 Seat。不指定该参数时，不会擅自把未标记设备分配到 `seat0`。
 

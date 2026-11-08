@@ -43,6 +43,23 @@ typedef enum dl_error {
 } dl_error;
 
 /*
+ * Session metadata is copied on registration. seat_id may be NULL for SSH,
+ * headless, and other sessions that do not belong to a local graphical seat.
+ * Pointers returned by get_session_properties() are borrowed until removal.
+ */
+typedef struct dl_session_properties {
+    const char *seat_id;
+    const char *type;
+    const char *class_name;
+    const char *service;
+    const char *desktop;
+    const char *tty;
+    const char *display;
+    uint32_t leader_pid;
+    bool remote;
+} dl_session_properties;
+
+/*
  * The core owns its model objects and copied identifiers.
  * This layer deliberately has no D-Bus, PAM, udev, seatd, or systemd
  * dependency. Adapters will be added around this single state model.
@@ -84,6 +101,15 @@ dl_error dl_manager_add_session(
     const char *session_id,
     uint32_t uid,
     const char *seat_id);
+dl_error dl_manager_add_session_with_properties(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t uid,
+    const dl_session_properties *properties);
+dl_error dl_manager_get_session_properties(
+    const dl_manager *manager,
+    const char *session_id,
+    dl_session_properties *out_properties);
 dl_error dl_manager_remove_session(dl_manager *manager, const char *session_id);
 dl_error dl_manager_set_active_session(
     dl_manager *manager,

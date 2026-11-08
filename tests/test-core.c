@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <string.h>
 
 
 static void test_device_fd_and_controller_lifecycle(void)
@@ -172,6 +173,40 @@ static void test_seat_session_and_device_lifecycle(void)
     dl_manager_destroy(manager);
 }
 
+static void test_unseated_remote_session_metadata(void)
+{
+    dl_manager *manager = NULL;
+    dl_session_properties input = {0};
+    dl_session_properties output = {0};
+    bool inactive = false;
+
+    input.type = "tty";
+    input.class_name = "user";
+    input.service = "sshd";
+    input.tty = "pts/3";
+    input.remote = true;
+    input.leader_pid = 4321U;
+
+    assert(dl_manager_create(&manager) == DL_OK);
+    assert(dl_manager_add_session_with_properties(
+        manager, "ssh-1", 1000U, &input) == DL_OK);
+    assert(dl_manager_get_session_properties(
+        manager, "ssh-1", &output) == DL_OK);
+    assert(output.seat_id == NULL);
+    assert(output.remote);
+    assert(output.leader_pid == 4321U);
+    assert(output.type != NULL && strcmp(output.type, "tty") == 0);
+    assert(output.class_name != NULL &&
+        strcmp(output.class_name, "user") == 0);
+    assert(output.service != NULL && strcmp(output.service, "sshd") == 0);
+    assert(output.tty != NULL && strcmp(output.tty, "pts/3") == 0);
+    assert(!dl_manager_session_is_active(manager, "ssh-1"));
+    assert(dl_manager_claim_device(
+        manager, "ssh-1", 226U, 0U, &inactive) == DL_ERROR_INVALID_STATE);
+    assert(dl_manager_remove_session(manager, "ssh-1") == DL_OK);
+    dl_manager_destroy(manager);
+}
+
 static void test_argument_validation(void)
 {
     dl_manager *manager = NULL;
@@ -192,6 +227,7 @@ int main(void)
     test_device_fd_and_controller_lifecycle();
     test_device_node_identity_and_master_capabilities();
     test_seat_session_and_device_lifecycle();
+    test_unseated_remote_session_metadata();
     test_argument_validation();
     puts("core model tests passed");
     return 0;

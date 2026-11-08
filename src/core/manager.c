@@ -1257,6 +1257,26 @@ dl_error dl_manager_release_control(
     return DL_OK;
 }
 
+size_t dl_manager_release_controls_by_connection(
+    dl_manager *manager, const char *connection_id)
+{
+    dl_session *session;
+    size_t released = 0U;
+    if (manager == NULL || connection_id == NULL || connection_id[0] == '\0')
+        return 0U;
+    for (session = manager->sessions; session != NULL; session = session->next) {
+        if (session->controller_id != NULL &&
+            strcmp(session->controller_id, connection_id) == 0) {
+            free_claims(session->claims);
+            session->claims = NULL;
+            free(session->controller_id);
+            session->controller_id = NULL;
+            released++;
+        }
+    }
+    return released;
+}
+
 dl_error dl_manager_take_device_fd(
     dl_manager *manager,
     const char *session_id,

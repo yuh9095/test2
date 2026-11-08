@@ -1010,6 +1010,20 @@ static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_VTABLE_END
 };
 
+static int method_name_owner_changed(sd_bus_message *message,
+    void *userdata, sd_bus_error *error)
+{
+    const char *name = NULL, *old_owner = NULL, *new_owner = NULL;
+    (void)error;
+    if (sd_bus_message_read(message, "sss", &name, &old_owner,
+            &new_owner) < 0)
+        return 0;
+    if (name != NULL && name[0] == ':' && old_owner != NULL &&
+        old_owner[0] != '\0' && (new_owner == NULL || new_owner[0] == '\0'))
+        (void)dl_manager_release_controls_by_connection(userdata, name);
+    return 0;
+}
+
 static int login1_open_internal(dl_login1 **out, dl_manager *manager,
     const char *address)
 {
@@ -1033,6 +1047,9 @@ static int login1_open_internal(dl_login1 **out, dl_manager *manager,
     r=sd_bus_add_fallback_vtable(s->bus,&s->user_slot,ROOT_PATH "/user",BUS_NAME ".User",user_vtable,NULL,manager); if(r<0) goto fail;
     r=sd_bus_add_fallback_vtable(s->bus,&s->seat_slot,SEAT_PATH,
         BUS_NAME ".Seat",seat_vtable,NULL,manager); if (r<0) goto fail;
+    r=sd_bus_add_match(s->bus,&s->owner_slot,
+        "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',member='NameOwnerChanged'",
+        method_name_owner_changed,manager); if (r<0) goto fail;
     r=sd_bus_request_name(s->bus,BUS_NAME,0); if (r<0) goto fail;
     *out=s; return 0;
 fail:
@@ -1061,7 +1078,7 @@ int dl_login1_dispatch(dl_login1 *s)
 void dl_login1_close(dl_login1 *s)
 {
     if (!s) return;
-    s->seat_slot=sd_bus_slot_unref(s->seat_slot);
+    s->owner_slot=sd_bus_slot_unref(s->owner_slot);\n    s->seat_slot=sd_bus_slot_unref(s->seat_slot);
     s->user_slot=sd_bus_slot_unref(s->user_slot);
     s->session_slot=sd_bus_slot_unref(s->session_slot);
     s->manager_slot=sd_bus_slot_unref(s->manager_slot);

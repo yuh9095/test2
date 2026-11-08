@@ -695,6 +695,46 @@ static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
         BUS_NAME ".Session", "Active", NULL);
 }
 
+static int method_seat_terminate(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    char seat_id[128];
+    sd_bus_creds *creds = NULL;
+    uid_t euid;
+    size_t i, count;
+    dl_login1 *service;
+    int r;
+    (void) error;
+    if ((r = seat_lookup(sd_bus_message_get_path(m), userdata, seat_id,
+            sizeof(seat_id))) < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "Seat does not exist");
+    if ((r = sd_bus_query_sender_creds(m, SD_BUS_CREDS_EUID, &creds)) < 0)
+        return r;
+    r = sd_bus_creds_get_euid(creds, &euid);
+    sd_bus_creds_unref(creds);
+    if (r < 0) return r;
+    if (euid != 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Only root may terminate all Sessions on a Seat");
+    service = dl_manager_get_adapter_userdata(userdata);
+    if (service == NULL)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+            "login1 service is unavailable");
+    count = dl_manager_get_session_count(userdata);
+    for (i = 0; i < count; i++) {
+        dl_session_properties p = {0};
+        if (dl_manager_get_session_at(userdata, i, &p) != DL_OK)
+            return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+                "Could not enumerate Sessions");
+        if (p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0)
+            continue;
+        r = termination_schedule(service, p.session_id);
+        if (r < 0) return termination_error_reply(m, errno);
+    }
+    return sd_bus_reply_method_return(m, "");
+}
+
 static int method_seat_activate_session(sd_bus_message *m, void *userdata,
     sd_bus_error *error)
 {
@@ -1194,6 +1234,7 @@ static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_PROPERTY("CanTTY","b",prop_seat_capability,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_PROPERTY("CanGraphical","b",prop_seat_capability,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_PROPERTY("Sessions","a(so)",prop_seat_sessions,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_METHOD("Terminate","","",method_seat_terminate,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ActivateSession","s","",method_seat_activate_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("SwitchTo","u","",method_seat_switch_to,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("SwitchToNext","","",method_seat_switch_next,SD_BUS_VTABLE_UNPRIVILEGED),

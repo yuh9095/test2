@@ -224,3 +224,8 @@ libseat logind backend 依赖 login1 Session 的控制器和设备生命周期�
 - systemd 262 Seat 实现：`src/login/logind-seat.c`
 
 本文件记录协议和行为要求。复制或改写上游实现之前，仍须完成许可证审计。
+
+
+## Seat.Terminate 实现说明
+
+仅 root 可以调用。服务端会为该 Seat 上每个已登记 Session 安排与 Session.Terminate 相同的 pidfd SIGTERM、5 秒宽限期和 SIGKILL 升级。若某个 Session 无法安全安排，调用返回错误；该操作不是事务，先前已安排的 Session 不会自动回滚。集成测试使用独立 Seat 和子进程验证目标范围与权限边界。

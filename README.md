@@ -94,7 +94,7 @@ retaining a stable process identity and refusing to fall back to an unprotected 
 The login1 service supports `Kill("leader", signal)` through pidfd and supports
 `Kill("all", SIGKILL)` only when the registered cgroup v2 directory can be safely
 opened and its `cgroup.procs` contains the registered Leader.
-`Terminate()` and `TerminateSession()` now send SIGTERM through the captured
+`Terminate()`, `TerminateSession()`, and root-only `Seat.Terminate()` send SIGTERM through the captured
 Leader pidfd and return without blocking the D-Bus dispatch loop. After a
 five-second grace period, the daemon escalates to SIGKILL. When a Session has
 a registered cgroup v2 path, the daemon pins and validates that directory

@@ -131,6 +131,7 @@ int main(void)
     assert(address!=NULL && address[0] != 0);
     assert(dl_manager_create(&manager)==DL_OK);
     assert(dl_manager_add_seat(manager,"seat0")==DL_OK);
+    assert(dl_manager_add_seat(manager,"seat-test")==DL_OK);
     kill_child = fork();
     assert(kill_child >= 0);
     if (kill_child == 0) { for (;;) pause(); }
@@ -156,6 +157,15 @@ int main(void)
     termination_properties.leader_pid = (uint32_t) manager_terminate_child;
     assert(dl_manager_add_session_with_properties(manager,"manager-term-test",
         (uint32_t)getuid(),&termination_properties)==DL_OK);
+    {
+        pid_t seat_child = fork();
+        assert(seat_child >= 0);
+        if (seat_child == 0) { for (;;) pause(); }
+        termination_properties.seat_id = "seat-test";
+        termination_properties.leader_pid = (uint32_t) seat_child;
+        assert(dl_manager_add_session_with_properties(manager,"seat-term-test",
+            (uint32_t)getuid(),&termination_properties)==DL_OK);
+    }
     session_properties.seat_id = "seat0";
     session_properties.type = "tty";
     session_properties.class_name = "user";
@@ -274,6 +284,22 @@ int main(void)
             "Terminate", "");
         assert(waitpid(terminate_child, &status, 0) == terminate_child);
         assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
+    }
+
+    /* Seat.Terminate is root-only and targets only the selected Seat. */
+    if (geteuid() == 0) {
+        int status = 0;
+        dl_session_properties p = {0};
+        call_ok(client, "/org/freedesktop/login1/seat/seat-test",
+            "org.freedesktop.login1.Seat", "Terminate", "");
+        assert(dl_manager_get_session_properties(manager,
+            "seat-term-test", &p) == DL_OK);
+        assert(waitpid((pid_t)p.leader_pid, &status, 0) == (pid_t)p.leader_pid);
+        assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
+    } else {
+        call_error_name(client, "/org/freedesktop/login1/seat/seat-test",
+            "org.freedesktop.login1.Seat", "Terminate",
+            SD_BUS_ERROR_ACCESS_DENIED, "");
     }
 
     /* Manager.TerminateSession escalates to SIGKILL after the grace period

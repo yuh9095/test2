@@ -11,7 +11,8 @@ extern "C" {
 typedef struct dl_manager dl_manager;
 
 typedef enum dl_device_pause_state {
-    DL_DEVICE_ACTIVE = 0,
+    DL_DEVICE_UNCLAIMED = 0,
+    DL_DEVICE_ACTIVE,
     DL_DEVICE_PAUSE_PENDING,
     DL_DEVICE_PAUSED
 } dl_device_pause_state;

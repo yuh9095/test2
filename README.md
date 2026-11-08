@@ -93,8 +93,14 @@ The core also captures a pidfd for the registered Leader when the kernel support
 retaining a stable process identity and refusing to fall back to an unprotected PID.
 The login1 service supports `Kill("leader", signal)` through pidfd and supports
 `Kill("all", SIGKILL)` only when the registered cgroup v2 directory can be safely
-opened and its `cgroup.procs` contains the registered Leader. This does not yet
-implement asynchronous `Terminate()` / `TerminateSession()` with a grace period.
+opened and its `cgroup.procs` contains the registered Leader.
+`Terminate()` and `TerminateSession()` now send SIGTERM through the captured
+Leader pidfd and return without blocking the D-Bus dispatch loop. After a
+five-second grace period, the daemon escalates to SIGKILL. When a Session has
+a registered cgroup v2 path, the daemon pins and validates that directory
+before signalling and uses its `cgroup.kill` file at the deadline. Without a
+usable cgroup, escalation is limited to the registered Leader; it does not
+claim to terminate every descendant process.
 
 ## Planned internal areas
 

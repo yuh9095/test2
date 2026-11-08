@@ -2,9 +2,21 @@
 
 面向使用 [Dinit](https://github.com/davmac314/dinit) 的 Linux 系统的登录、会话、Seat 与设备管理服务。
 
-> **项目状态：初始搭建阶段。** 当前正在评估整体架构与上游代码来源。本仓库尚未提供可用的 logind 实现。
-
 [English](README.md) | 简体中文
+
+> **项目状态：早期开发阶段。** 仓库目前已有第一版 C11 核心状态模型和单元测试，但尚未形成可用的 login1 D-Bus 服务，也尚未完成 Turnstile、seatd/libseat、elogind API 兼容层或 eudev 集成。
+
+## 构建与测试
+
+依赖：C11 编译器、Meson 和 Ninja。
+
+```sh
+meson setup build
+meson compile -C build
+meson test -C build --print-errorlogs
+```
+
+构建使用严格 ISO C11 模式（`-std=c11`），不使用 GNU11。GitHub Actions 会分别使用 GCC 和 Clang 编译并运行测试。
 
 ## 项目方向
 
@@ -29,6 +41,12 @@
 7. 不得对尚未实现的 API 虚报成功。暂不支持的操作必须返回明确且适当的错误。
 8. 同时面向 glibc 和 musl 设计与测试。
 9. 在导入任何上游代码前，审查代码来源、许可证及依赖边界。
+
+## 当前核心实现范围
+
+第一版核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。核心负责对象生命周期，并复制保存对象标识符。
+
+目前的逻辑设备占用还不是真实打开设备，也不执行 Unix 文件描述符传递；这些操作将由后续 seatd/libseat 适配层实现。当前核心不依赖 D-Bus、PAM、udev、seatd 或 systemd。
 
 ## 计划中的内部模块
 
@@ -55,7 +73,7 @@
 
 ## 开发方式
 
-采用渐进式实现，但从一开始就按完整系统进行架构设计和集成测试。在导入实现代码前，先完成：
+采用渐进式实现，但从一开始就按完整系统进行架构设计和集成测试。在导入上游实现代码前，先完成：
 
 1. 盘点相关上游项目及其实际具备的能力。
 2. 记录许可证、代码来源和必要的版权声明。

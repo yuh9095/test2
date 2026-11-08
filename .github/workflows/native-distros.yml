@@ -21,63 +21,140 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang]
         include:
-          - distro: Ubuntu 24.04
+          - distro: "Ubuntu 24.04"
             arch: x86_64
             runner: ubuntu-24.04
             image: ubuntu:24.04
             family: debian
-          - distro: Ubuntu 24.04
+            compiler: gcc
+          - distro: "Ubuntu 24.04"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: ubuntu:24.04
+            family: debian
+            compiler: clang
+          - distro: "Ubuntu 24.04"
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: ubuntu:24.04
             family: debian
-          - distro: Debian stable
+            compiler: gcc
+          - distro: "Ubuntu 24.04"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: ubuntu:24.04
+            family: debian
+            compiler: clang
+          - distro: "Debian stable"
             arch: x86_64
             runner: ubuntu-24.04
             image: debian:stable-slim
             family: debian
-          - distro: Debian stable
+            compiler: gcc
+          - distro: "Debian stable"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: debian:stable-slim
+            family: debian
+            compiler: clang
+          - distro: "Debian stable"
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: debian:stable-slim
             family: debian
-          - distro: Fedora latest
+            compiler: gcc
+          - distro: "Debian stable"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: debian:stable-slim
+            family: debian
+            compiler: clang
+          - distro: "Fedora latest"
             arch: x86_64
             runner: ubuntu-24.04
             image: fedora:latest
             family: fedora
-          - distro: Fedora latest
+            compiler: gcc
+          - distro: "Fedora latest"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: fedora:latest
+            family: fedora
+            compiler: clang
+          - distro: "Fedora latest"
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: fedora:latest
             family: fedora
-          - distro: Alpine edge (musl)
+            compiler: gcc
+          - distro: "Fedora latest"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: fedora:latest
+            family: fedora
+            compiler: clang
+          - distro: "Alpine edge (musl)"
             arch: x86_64
             runner: ubuntu-24.04
             image: alpine:edge
             family: alpine
-          - distro: Alpine edge (musl)
+            compiler: gcc
+          - distro: "Alpine edge (musl)"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: alpine:edge
+            family: alpine
+            compiler: clang
+          - distro: "Alpine edge (musl)"
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: alpine:edge
             family: alpine
-          - distro: openSUSE Tumbleweed
+            compiler: gcc
+          - distro: "Alpine edge (musl)"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: alpine:edge
+            family: alpine
+            compiler: clang
+          - distro: "openSUSE Tumbleweed"
             arch: x86_64
             runner: ubuntu-24.04
             image: opensuse/tumbleweed:latest
             family: suse
-          - distro: openSUSE Tumbleweed
+            compiler: gcc
+          - distro: "openSUSE Tumbleweed"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: opensuse/tumbleweed:latest
+            family: suse
+            compiler: clang
+          - distro: "openSUSE Tumbleweed"
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: opensuse/tumbleweed:latest
             family: suse
-          - distro: Arch Linux
+            compiler: gcc
+          - distro: "openSUSE Tumbleweed"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: opensuse/tumbleweed:latest
+            family: suse
+            compiler: clang
+          - distro: "Arch Linux"
             arch: x86_64
             runner: ubuntu-24.04
             image: archlinux:latest
             family: arch
+            compiler: gcc
+          - distro: "Arch Linux"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: archlinux:latest
+            family: arch
+            compiler: clang
+
 
     env:
       CC: ${{ matrix.compiler }}

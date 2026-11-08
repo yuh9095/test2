@@ -71,6 +71,12 @@ static void call_error_name(sd_bus *bus,const char *path,
         method,&error,&reply,signature,ap);
     va_end(ap);
     assert(r<0);
+    if (error.name == NULL || strcmp(error.name, expected) != 0) {
+        fprintf(stderr, "D-Bus %s.%s expected error %s, got %s (r=%d, message=%s)\\n",
+            interface, method, expected,
+            error.name == NULL ? "(null)" : error.name, r,
+            error.message == NULL ? "(none)" : error.message);
+    }
     assert(error.name!=NULL && strcmp(error.name,expected)==0);
     sd_bus_message_unref(reply);
     sd_bus_error_free(&error);

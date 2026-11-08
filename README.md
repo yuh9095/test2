@@ -117,3 +117,16 @@ each feature must be verified against its implementation and tested.
 The project license has not yet been selected. No third-party source code
 should be copied into this repository until license compatibility and
 attribution requirements have been reviewed.
+
+## Vendored seatd / libseat
+
+The upstream seatd/libseat 0.9.3 Linux source set is vendored under
+`third_party/seatd/`, with its MIT license and pinned provenance recorded in
+`third_party/seatd/UPSTREAM.md`. It includes the seatd server, libseat public
+API and backends, Linux device/VT handling, tests, example, and manual sources.
+
+This is a source import only: the root dinit-logind build does not yet build or
+launch the vendored seatd daemon, and no runtime integration is claimed yet.
+The upstream libseat logind backend is disabled by default in its vendored
+Meson options to avoid an implicit libsystemd/elogind dependency. Integration
+must preserve one authoritative Seat/Session state source.

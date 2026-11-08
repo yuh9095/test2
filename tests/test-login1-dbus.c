@@ -63,10 +63,9 @@ int main(void)
     service_state state={0};
     sd_bus_error error=SD_BUS_ERROR_NULL;
     sd_bus_message *reply=NULL;
-    const char *object_path_value=NULL;
-    char object_path[256];
+    const char *object_path=NULL;
     int r;
-    assert(address!=NULL && address[0] != 0);
+    assert(address!=NULL && address[0]!='\\0');
     assert(dl_manager_create(&manager)==DL_OK);
     assert(dl_manager_add_seat(manager,"seat0")==DL_OK);
     assert(dl_manager_add_session(manager,"test-session",(uint32_t)getuid(),
@@ -75,16 +74,17 @@ int main(void)
     state.login1=login1;
     atomic_init(&state.stopping,false);
     assert(pthread_create(&thread,NULL,dispatch_thread,&state)==0);
-    assert(setenv("DBUS_SYSTEM_BUS_ADDRESS",address,1)==0);
-    assert(sd_bus_open_system(&client)==0);
+    assert(sd_bus_new(&client)==0);
+    assert(sd_bus_set_address(client,address)==0);
+    assert(sd_bus_set_bus_client(client,1)==0);
+    assert(sd_bus_start(client)==0);
 
     r=sd_bus_call_method(client,"org.freedesktop.login1",
         "/org/freedesktop/login1","org.freedesktop.login1.Manager",
         "GetSession",&error,&reply,"s","test-session");
     assert(r>=0);
-    assert(sd_bus_message_read(reply,"o",&object_path_value)>=0);
-    assert(object_path_value!=NULL);
-    assert(snprintf(object_path,sizeof(object_path),"%s",object_path_value)>0);
+    assert(sd_bus_message_read(reply,"o",&object_path)>=0);
+    assert(object_path!=NULL);
     sd_bus_message_unref(reply);
     reply=NULL;
 

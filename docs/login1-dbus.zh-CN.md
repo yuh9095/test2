@@ -16,11 +16,11 @@ Session：
 - `Activate()`：更新核心模型中的 Seat 活动 Session，并发送 Active 属性变化通知。
   当前尚未连接 VT ioctl，因此不等同于完整物理 VT 切换。
 - `Lock()`、`Unlock()`：向对应 Session 对象发出 Lock/Unlock 信号。
-- `TakeControl(force)`、`ReleaseControl())：以 D-Bus unique name 绑定控制权；
+- `TakeControl(force)`、`ReleaseControl()`：以 D-Bus unique name 绑定控制权；
   校验调用者 UID，强制接管仅允许 root。
 - `TakeDevice(major,minor)`：由核心设备管理层打开并验证字符设备，返回 D-Bus Unix FD
   和 inactive 标志。
-- `ReleaseDevice()`、`PauseDeviceComplete())：要求当前 D-Bus 控制者身份匹配。
+- `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。
 
 Seat：Id、ActiveSession、CanTTY、CanGraphical。
 User：新增最小对象，导出 UID、Name。
@@ -36,8 +36,8 @@ User 对象路径。
 - **Activate**：目前切换逻辑活动 Session，不执行 VT_ACTIVATE / VT_WAITACTIVE。
 - **设备暂停通知**：核心具备 pause state，但尚未将 seatd/libseat 的暂停/恢复事件完整映射为
   login1 的 PauseDevice / ResumeDevice 信号。
-- **D-Bus 运行时测试**：本提交尚未增加私有 D-Bus 总线端到端测试；当前 CI 的构建和单元测试
-  不证明真实桌面客户端兼容。
+- **D-Bus 运行时测试**：已增加私有总线端到端测试，覆盖当前列出的 Manager/Session 方法；
+  尚未覆盖设备 FD、Pause/Resume 信号、VT 切换和完整桌面客户端行为。
 - `GetSessionByPID` 仍只匹配已登记 Leader PID；PID reuse / pidfd 保护及全 Session
   进程映射仍待实现。
 

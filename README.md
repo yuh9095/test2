@@ -1,0 +1,93 @@
+# dinit-logind
+
+A login, session, seat, and device-management service for systems using
+[Dinit](https://github.com/davmac314/dinit).
+
+> **Status: initial project setup.** The architecture and source-code provenance
+> are being evaluated. This repository does not yet provide a working logind
+> implementation.
+
+## Project direction
+
+Build one integrated desktop and system login infrastructure by selectively
+reusing mature ideas and implementations from:
+
+- **elogind** — the login1 D-Bus model and implementation, user/session
+  lifecycle, inhibitors, and power-management behavior.
+- **seatd / libseat** — seat activation, device access, and file-descriptor
+  handoff, while preserving the existing libseat client ecosystem.
+- **Turnstile** — useful PAM and user-session lifecycle mechanisms, including
+  runtime-directory handling where appropriate.
+- **Dinit** — native service lifecycle and existing cgroup management.
+- **eudev** — device discovery and hotplug events, remaining an independent
+  device manager.
+
+This is an integration and architectural refactoring effort, not a plan to run
+three independent session/seat managers side by side.
+
+## Core design principles
+
+1. Maintain one authoritative internal model for users, sessions, seats, and
+   devices.
+2. Do not require systemd or a systemd PID 1.
+3. Keep Dinit's native cgroup implementation unchanged. Do not recreate
+   systemd's sandboxing, slice, or scope machinery as a project goal.
+4. Preserve the public login1 D-Bus and libseat client interfaces where their
+   behavior can be implemented correctly.
+5. Support graphical and non-graphical sessions: X11, Wayland, TTY, SSH, and
+   headless/container environments.
+6. Treat graphical device access as an optional capability. A headless system
+   must still be able to manage users, PAM sessions, runtime directories,
+   inhibitors, and session lifecycles.
+7. Do not report success for unimplemented APIs. Unsupported operations must
+   return explicit, appropriate errors.
+8. Design for both glibc and musl.
+9. Audit source provenance, licenses, and dependency boundaries before
+   importing code from upstream projects.
+
+## Planned internal areas
+
+These are conceptual boundaries, not a commitment to separate daemons:
+
+- User and session lifecycle
+- Seat and device management
+- VT and graphical-session integration
+- PAM integration and runtime directories
+- login1 D-Bus service
+- Power management and inhibitors
+- libseat compatibility
+- Dinit and udev integration
+
+The implementation should have a single source of truth for shared state.
+External protocols and compatibility layers must call into that core rather
+than maintain parallel state.
+
+## Initial validation target
+
+The first end-to-end target is a DroidSpaces Linux container running an
+XFCE4/X11 desktop, with a remote X11/VNC path where available. This target
+must also validate non-graphical login/session behavior; it is not a reason to
+make X11 or VNC a dependency of the core service.
+
+Later validation targets include physical Linux systems, Wayland compositors,
+KDE Plasma, GNOME, and headless systems.
+
+## Development approach
+
+Work incrementally, but design and test the complete integration as one
+system. Before importing implementation code:
+
+1. Inventory the relevant upstream components and their actual capabilities.
+2. Record licenses, provenance, and required notices.
+3. Define shared object ownership and lifecycle boundaries.
+4. Define the login1 and libseat compatibility requirements.
+5. Establish build and test coverage for glibc and musl.
+
+No upstream component is assumed to provide every capability listed above;
+each feature must be verified against its implementation and tested.
+
+## License
+
+The project license has not yet been selected. No third-party source code
+should be copied into this repository until license compatibility and
+attribution requirements have been reviewed.

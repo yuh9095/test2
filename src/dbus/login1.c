@@ -329,7 +329,8 @@ static int method_lock_signal(sd_bus_message*m,void*u,bool lock)
  r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c);if(r<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
  sd_bus_creds_unref(c);
  r=sd_bus_emit_signal(sd_bus_message_get_bus(m),sd_bus_message_get_path(m),BUS_NAME ".Session",lock?"Lock":"Unlock","");
- if(r<0)return r;return sd_bus_reply_method_return(m,"");
+ if(r<0)return r;
+ return sd_bus_reply_method_return(m,"");
 }
 static int method_lock(sd_bus_message*m,void*u,sd_bus_error*e){(void)e;return method_lock_signal(m,u,true);}
 static int method_unlock(sd_bus_message*m,void*u,sd_bus_error*e){(void)e;return method_lock_signal(m,u,false);}

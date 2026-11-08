@@ -53,6 +53,25 @@ static void call_ok(sd_bus *bus,const char *path,const char *interface,
     sd_bus_error_free(&error);
 }
 
+
+static void call_not_supported(sd_bus *bus,const char *path,
+    const char *interface,const char *method,const char *signature,...)
+{
+    sd_bus_error error=SD_BUS_ERROR_NULL;
+    sd_bus_message *reply=NULL;
+    va_list ap;
+    int r;
+    va_start(ap,signature);
+    r=sd_bus_call_methodv(bus,"org.freedesktop.login1",path,interface,
+        method,&error,&reply,signature,ap);
+    va_end(ap);
+    assert(r<0);
+    assert(error.name!=NULL);
+    assert(strcmp(error.name,SD_BUS_ERROR_NOT_SUPPORTED)==0);
+    sd_bus_message_unref(reply);
+    sd_bus_error_free(&error);
+}
+
 int main(void)
 {
     const char *address=getenv("DBUS_SESSION_BUS_ADDRESS");
@@ -122,6 +141,19 @@ int main(void)
         "org.freedesktop.login1.Manager","GetUserByPID","u",(uint32_t)getpid());
     call_ok(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","ListUsers","");
+
+    /* Process-wide termination must never report success until the
+     * registration layer supplies trustworthy process membership. */
+    call_not_supported(client,object_path,
+        "org.freedesktop.login1.Session","Terminate","");
+    call_not_supported(client,object_path,
+        "org.freedesktop.login1.Session","Kill","si","leader",15);
+    call_not_supported(client,"/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager","TerminateSession","s",
+        "test-session");
+    call_not_supported(client,"/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager","KillSession","ssi",
+        "test-session","leader",15);
 
     sd_bus_close_unref(client);
     atomic_store(&state.stopping,true);

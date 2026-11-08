@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/random.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -36,8 +37,14 @@ static int request_socket(const char *path, const dl_session_registration_reques
     socklen_t len;
     int fd;
     ssize_t n;
+    struct timeval timeout;
     fd=socket(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0);
     if(fd<0)return -1;
+    timeout.tv_sec=2; timeout.tv_usec=0;
+    if(setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout))!=0 ||
+       setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout))!=0) {
+        close(fd); return -1;
+    }
     memset(&a,0,sizeof(a)); a.sun_family=AF_UNIX;
     memcpy(a.sun_path,path,strlen(path)+1U);
     len=(socklen_t)(offsetof(struct sockaddr_un,sun_path)+strlen(path)+1U);

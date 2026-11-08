@@ -71,6 +71,7 @@ static void test_remote_unseated_session_and_authentication(void)
     initialize_request(&request);
     request.operation = DL_SESSION_REGISTRATION_OPEN;
     request.uid = 1001U;
+    request.leader_pid = 4343U;
     request.flags = DL_SESSION_REGISTRATION_FLAG_REMOTE;
     (void) strcpy(request.session_id, "ssh_1");
     (void) strcpy(request.type, "tty");
@@ -108,6 +109,21 @@ static void test_reject_malformed_messages(void)
         DL_ERROR_INVALID_ARGUMENT);
     assert(dl_session_registration_apply(
         manager, peer, peer, &request, sizeof(request) - 1U, &response) ==
+        DL_ERROR_INVALID_ARGUMENT);
+
+    initialize_request(&request);
+    request.operation = DL_SESSION_REGISTRATION_OPEN;
+    (void) strcpy(request.session_id, "zero_pid");
+    assert(dl_session_registration_apply(
+        manager, peer, peer, &request, sizeof(request), &response) ==
+        DL_ERROR_INVALID_ARGUMENT);
+
+    initialize_request(&request);
+    request.operation = DL_SESSION_REGISTRATION_CLOSE;
+    (void) strcpy(request.session_id, "valid");
+    request.service[sizeof(request.service) - 1U] = 'x';
+    assert(dl_session_registration_apply(
+        manager, peer, peer, &request, sizeof(request), &response) ==
         DL_ERROR_INVALID_ARGUMENT);
 
     initialize_request(&request);

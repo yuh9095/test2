@@ -38,6 +38,15 @@ static bool valid_session_id(const char *value)
     return true;
 }
 
+static bool bytes_are_zero(const char *value, size_t size)
+{
+    size_t index;
+    for (index = 0U; index < size; index++) {
+        if (value[index] != '\\0') return false;
+    }
+    return true;
+}
+
 static const char *optional_value(const char *value)
 {
     return value[0] == '\0' ? NULL : value;
@@ -45,7 +54,8 @@ static const char *optional_value(const char *value)
 
 static bool validate_open_request(const dl_session_registration_request *request)
 {
-    return valid_session_id(request->session_id) &&
+    return request->leader_pid != 0U &&
+        valid_session_id(request->session_id) &&
         bounded_string(request->seat_id, sizeof(request->seat_id), false) &&
         bounded_string(request->type, sizeof(request->type), false) &&
         bounded_string(request->class_name, sizeof(request->class_name), false) &&

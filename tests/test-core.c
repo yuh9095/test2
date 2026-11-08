@@ -223,6 +223,38 @@ static void test_unseated_remote_session_metadata(void)
     dl_manager_destroy(manager);
 }
 
+static void test_seat_query_api(void)
+{
+    dl_manager *manager = NULL;
+    const char *seat_id = NULL;
+    const char *active_session_id = NULL;
+
+    assert(dl_manager_create(&manager) == DL_OK);
+    assert(dl_manager_get_seat_count(manager) == 0U);
+    assert(dl_manager_get_seat_at(manager, 0U, &seat_id) == DL_ERROR_NOT_FOUND);
+    assert(dl_manager_add_seat(manager, "seat0") == DL_OK);
+    assert(dl_manager_add_seat(manager, "seat1") == DL_OK);
+    assert(dl_manager_get_seat_count(manager) == 2U);
+    assert(dl_manager_get_seat_at(manager, 0U, &seat_id) == DL_OK);
+    assert(seat_id != NULL);
+    assert(strcmp(seat_id, "seat1") == 0);
+    assert(dl_manager_get_seat_at(manager, 2U, &seat_id) == DL_ERROR_NOT_FOUND);
+    assert(dl_manager_get_active_session(
+        manager, "seat0", &active_session_id) == DL_ERROR_NOT_FOUND);
+    assert(active_session_id == NULL);
+    assert(dl_manager_add_session(manager, "s1", 1000U, "seat0") == DL_OK);
+    assert(dl_manager_set_active_session(manager, "seat0", "s1") == DL_OK);
+    assert(dl_manager_get_active_session(
+        manager, "seat0", &active_session_id) == DL_OK);
+    assert(strcmp(active_session_id, "s1") == 0);
+    assert(dl_manager_remove_session(manager, "s1") == DL_OK);
+    assert(dl_manager_get_active_session(
+        manager, "seat0", &active_session_id) == DL_ERROR_NOT_FOUND);
+    assert(dl_manager_remove_seat(manager, "seat0") == DL_OK);
+    assert(dl_manager_remove_seat(manager, "seat1") == DL_OK);
+    dl_manager_destroy(manager);
+}
+
 static void test_argument_validation(void)
 {
     dl_manager *manager = NULL;
@@ -244,6 +276,7 @@ int main(void)
     test_device_node_identity_and_master_capabilities();
     test_seat_session_and_device_lifecycle();
     test_unseated_remote_session_metadata();
+    test_seat_query_api();
     test_argument_validation();
     puts("core model tests passed");
     return 0;

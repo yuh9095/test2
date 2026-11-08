@@ -72,6 +72,17 @@ void dl_manager_destroy(dl_manager *manager);
 dl_error dl_manager_add_seat(dl_manager *manager, const char *seat_id);
 dl_error dl_manager_remove_seat(dl_manager *manager, const char *seat_id);
 
+/* Seat identifiers and active-session identifiers are borrowed until removal. */
+size_t dl_manager_get_seat_count(const dl_manager *manager);
+dl_error dl_manager_get_seat_at(
+    const dl_manager *manager,
+    size_t index,
+    const char **out_seat_id);
+dl_error dl_manager_get_active_session(
+    const dl_manager *manager,
+    const char *seat_id,
+    const char **out_session_id);
+
 dl_error dl_manager_add_device(
     dl_manager *manager,
     const char *seat_id,

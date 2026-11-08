@@ -349,6 +349,67 @@ dl_error dl_manager_remove_seat(dl_manager *manager, const char *seat_id)
     return DL_ERROR_NOT_FOUND;
 }
 
+size_t dl_manager_get_seat_count(const dl_manager *manager)
+{
+    const dl_seat *seat;
+    size_t count = 0U;
+
+    if (manager == NULL) {
+        return 0U;
+    }
+    for (seat = manager->seats; seat != NULL; seat = seat->next) {
+        if (count == SIZE_MAX) {
+            return SIZE_MAX;
+        }
+        count++;
+    }
+    return count;
+}
+
+dl_error dl_manager_get_seat_at(
+    const dl_manager *manager,
+    size_t index,
+    const char **out_seat_id)
+{
+    const dl_seat *seat;
+    size_t current = 0U;
+
+    if (manager == NULL || out_seat_id == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    *out_seat_id = NULL;
+    for (seat = manager->seats; seat != NULL; seat = seat->next) {
+        if (current == index) {
+            *out_seat_id = seat->id;
+            return DL_OK;
+        }
+        current++;
+    }
+    return DL_ERROR_NOT_FOUND;
+}
+
+dl_error dl_manager_get_active_session(
+    const dl_manager *manager,
+    const char *seat_id,
+    const char **out_session_id)
+{
+    const dl_seat *seat;
+
+    if (manager == NULL || seat_id == NULL || out_session_id == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    *out_session_id = NULL;
+    seat = find_seat(manager, seat_id);
+    if (seat == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (seat->active_session_id == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    *out_session_id = seat->active_session_id;
+    return DL_OK;
+}
+
 dl_error dl_manager_add_device(
     dl_manager *manager,
     const char *seat_id,

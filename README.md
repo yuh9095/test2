@@ -6,12 +6,13 @@ A login, session, seat, and device-management service for systems using
 [简体中文](README.zh-CN.md)
 
 > **Status: early development.** The repository contains an initial C11 core
-> model and unit tests. It is not yet a working login1 D-Bus service and does
-> not yet integrate Turnstile, seatd/libseat, elogind-compatible APIs, or eudev.
+> model, Linux libudev/eudev device integration, and a foreground daemon
+> supervised by Dinit. The login1 D-Bus service, Turnstile session creation,
+> libseat FD handoff, and full elogind API compatibility are not yet complete.
 
 ## Build and test
 
-Requirements: a C11 compiler, Meson, and Ninja.
+Requirements: a C11 compiler, Meson, Ninja, and libudev development files.
 
 ```sh
 meson setup build
@@ -60,16 +61,24 @@ three independent session/seat managers side by side.
 9. Audit source provenance, licenses, and dependency boundaries before
    importing code from upstream projects.
 
-## Current core scope
+## Current implementation scope
 
-The initial core in `src/core/manager.c` provides one in-process model for
-Seats, Sessions, devices, active-session selection, device identity
-generations, and logical per-session device claims. It owns copied object
-identifiers and enforces lifecycle constraints.
+The core in `src/core/manager.c` provides one in-process model for Seats,
+Sessions, devices, active-session selection, device identity generations,
+and logical per-session device claims.
 
-Logical device claims are not yet real device opens or Unix file-descriptor
-handoffs. Those operations will be implemented in the seatd/libseat adapter.
-The core currently has no D-Bus, PAM, udev, seatd, or systemd dependency.
+The Linux platform layer uses libudev to enumerate devices and monitor eudev
+hotplug events. Its Seat adapter applies a caller-supplied policy, caches
+syspath-to-Seat identity for reliable removal, and registers verified
+character-device nodes with the core. The foreground `dinit-logind` daemon
+currently accepts `tty`, `drm`, and `input` devices. It prefers explicit
+`ID_SEAT` metadata; an optional `--default-seat ID` enables an administrator
+to assign otherwise-unlabelled supported devices to a chosen Seat. Without
+that option, unlabelled devices are not silently assigned to `seat0`.
+
+This is device discovery and core registration, not yet a complete login1
+service or graphical session manager. Logical device claims and the current
+device-FD APIs are not yet connected to Unix FD transfer over D-Bus.
 
 ## Planned internal areas
 

@@ -14,17 +14,32 @@
 
 #define DL_VERSION "0.1.0"
 
+typedef struct dl_daemon_device_policy {
+    const char *default_seat;
+} dl_daemon_device_policy;
+
 static void print_usage(const char *program)
 {
     (void) printf(
-        "Usage: %s [--help] [--version]\n"
+        "Usage: %s [--default-seat ID] [--help] [--version]\n"
         "\n"
         "Run dinit-logind in the foreground.\n"
         "\n"
         "Options:\n"
-        "  --help       Show this help and exit\n"
-        "  --version    Show version and exit\n",
+        "  --default-seat ID  Assign otherwise-unlabelled seat devices to ID\n"
+        "  --help             Show this help and exit\n"
+        "  --version          Show version and exit\n"
+        "\n"
+        "Without --default-seat, devices lacking ID_SEAT remain unmanaged.\n",
         program);
+}
+
+static bool supported_seat_subsystem(const char *subsystem)
+{
+    return subsystem != NULL &&
+        (strcmp(subsystem, "tty") == 0 ||
+         strcmp(subsystem, "drm") == 0 ||
+         strcmp(subsystem, "input") == 0);
 }
 
 static bool select_device_seat(
@@ -33,24 +48,50 @@ static bool select_device_seat(
     unsigned int *capabilities,
     void *userdata)
 {
-    (void) userdata;
+    const dl_daemon_device_policy *policy = userdata;
+    const char *selected_seat;
 
-    if (device == NULL || device->seat_id == NULL ||
-        device->seat_id[0] == '\0') {
+    if (device == NULL || !supported_seat_subsystem(device->subsystem)) {
         return false;
     }
 
-    *seat_id = device->seat_id;
+    selected_seat = device->seat_id;
+    if (selected_seat == NULL || selected_seat[0] == '\0') {
+        selected_seat = policy != NULL ? policy->default_seat : NULL;
+    }
+    if (selected_seat == NULL || selected_seat[0] == '\0') {
+        return false;
+    }
+
+    *seat_id = selected_seat;
     *capabilities = DL_DEVICE_CAP_NONE;
 
-    if (device->subsystem != NULL &&
-        strcmp(device->subsystem, "tty") == 0) {
+    if (strcmp(device->subsystem, "tty") == 0) {
         *capabilities |= DL_DEVICE_CAP_TTY | DL_DEVICE_CAP_VT;
-    } else if (device->subsystem != NULL &&
-               strcmp(device->subsystem, "drm") == 0) {
+    } else if (strcmp(device->subsystem, "drm") == 0) {
         *capabilities |= DL_DEVICE_CAP_GRAPHICAL;
     }
 
+    return true;
+}
+
+static bool valid_seat_id(const char *seat_id)
+{
+    size_t index;
+
+    if (seat_id == NULL || seat_id[0] == '\0' ||
+        strlen(seat_id) > 64U) {
+        return false;
+    }
+    for (index = 0U; seat_id[index] != '\0'; index++) {
+        unsigned char ch = (unsigned char) seat_id[index];
+        if (!((ch >= 'a' && ch <= 'z') ||
+              (ch >= 'A' && ch <= 'Z') ||
+              (ch >= '0' && ch <= '9') ||
+              ch == '_' || ch == '-')) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -172,6 +213,7 @@ int main(int argc, char **argv)
 {
     dl_manager *manager = NULL;
     dl_udev_seat_monitor *monitor = NULL;
+    dl_daemon_device_policy device_policy = { NULL };
     int signal_fd = -1;
     int exit_status = EXIT_FAILURE;
     int index;
@@ -184,6 +226,16 @@ int main(int argc, char **argv)
         if (strcmp(argv[index], "--version") == 0) {
             (void) printf("dinit-logind %s\n", DL_VERSION);
             return EXIT_SUCCESS;
+        }
+        if (strcmp(argv[index], "--default-seat") == 0) {
+            if (index + 1 >= argc ||
+                !valid_seat_id(argv[index + 1])) {
+                (void) fprintf(stderr,
+                    "dinit-logind: --default-seat requires a valid Seat ID\n");
+                return EXIT_FAILURE;
+            }
+            device_policy.default_seat = argv[++index];
+            continue;
         }
         print_usage(argv[0]);
         (void) fprintf(stderr, "dinit-logind: unknown option: %s\n",
@@ -204,7 +256,7 @@ int main(int argc, char **argv)
     }
 
     if (dl_udev_seat_monitor_open(
-            &monitor, manager, select_device_seat, NULL) != 0) {
+            &monitor, manager, select_device_seat, &device_policy) != 0) {
         (void) fprintf(stderr, "dinit-logind: cannot open libudev monitor: %s\n",
             strerror(errno));
         goto cleanup;
@@ -216,8 +268,14 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
-    (void) fprintf(stderr,
-        "dinit-logind: started; monitoring eudev events (foreground)\n");
+    if (device_policy.default_seat != NULL) {
+        (void) fprintf(stderr,
+            "dinit-logind: started; default Seat is %s; monitoring eudev events\n",
+            device_policy.default_seat);
+    } else {
+        (void) fprintf(stderr,
+            "dinit-logind: started; only explicitly labelled Seat devices are managed\n");
+    }
 
     if (run_event_loop(monitor, signal_fd) != 0) {
         (void) fprintf(stderr, "dinit-logind: event loop failed: %s\n",

@@ -4,11 +4,11 @@
 
 [English](README.md) | 简体中文
 
-> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev 设备适配层，以及可由 Dinit 监督的前台守护进程入口。login1 D-Bus、Turnstile 会话创建、libseat FD 交接和 elogind API 兼容仍未完成。
+> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev/eudev 设备集成，以及可由 Dinit 监督的前台守护进程。login1 D-Bus、Turnstile 会话创建、libseat FD 交接和完整 elogind API 兼容仍未完成。
 
 ## 构建与测试
 
-依赖：C11 编译器、Meson 和 Ninja。
+依赖：C11 编译器、Meson、Ninja，以及 libudev 开发文件。
 
 ```sh
 meson setup build
@@ -28,7 +28,7 @@ meson test -C build --print-errorlogs
 - **Dinit**：使用原生服务生命周期管理和现有 cgroup 管理能力。
 - **eudev**：提供设备发现与热插拔事件，并继续作为独立设备管理器运行。
 
-本项目的目标是整合并重构架构，而不是让三套独立的会话或 Seat 管理器并行运行。
+本项目的目标是整合并重构架构，而不是让多套独立的会话或 Seat 管理器并行运行。
 
 ## 核心设计原则
 
@@ -42,11 +42,13 @@ meson test -C build --print-errorlogs
 8. 同时面向 glibc 和 musl 设计与测试。
 9. 在导入任何上游代码前，审查代码来源、许可证及依赖边界。
 
-## 当前核心实现范围
+## 当前实现范围
 
-第一版核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。核心负责对象生命周期，并复制保存对象标识符。
+核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。
 
-目前的逻辑设备占用还不是真实打开设备，也不执行 Unix 文件描述符传递；这些操作将由后续 seatd/libseat 适配层实现。当前核心不依赖 D-Bus、PAM、udev、seatd 或 systemd。
+Linux 平台层通过 libudev 枚举设备并监听 eudev 热插拔事件。Seat 适配层应用调用者提供的策略，缓存 syspath 到 Seat 的映射以保证设备移除时能找到原记录，并将经过设备身份校验的字符设备节点注册到核心。前台 `dinit-logind` 守护进程目前接纳 `tty`、`drm` 和 `input` 子系统设备：优先使用明确的 `ID_SEAT` 属性；管理员也可以通过可选参数 `--default-seat ID`，将没有 `ID_SEAT` 的受支持设备分配给指定 Seat。不指定该参数时，不会擅自把未标记设备分配到 `seat0`。
+
+这目前实现的是设备发现和核心注册，还不是完整的 login1 服务或图形会话管理器。逻辑设备占用和现有设备 FD API 尚未连接到 D-Bus Unix FD 传递。
 
 ## 计划中的内部模块
 

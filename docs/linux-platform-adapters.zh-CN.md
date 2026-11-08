@@ -1,64 +1,47 @@
-# Linux device and VT adapters
+# Linux 设备与 VT 适配层
 
-This directory contains Linux-only platform adapters. The core state model
-remains independent of D-Bus, PAM, udev, seatd, and systemd.
+本目录包含仅面向 Linux 的平台适配层。核心状态模型不依赖 D-Bus、PAM、udev、seatd 或 systemd。
 
-## eudev/libudev adapter
+## eudev/libudev 适配层
 
-`udev.c` wraps libudev enumeration and the udev netlink monitor. It reports
-device node identity (major/minor), syspath, subsystem, devtype, `ID_SEAT`,
-and `ID_SEAT_MASTER` metadata to a caller-supplied callback. String members
-are borrowed for the duration of the callback.
+`udev.c` 使用 libudev 完成设备枚举和 udev netlink 事件监听，并向回调提供设备节点身份（major/minor）、syspath、subsystem、devtype、`ID_SEAT` 和 `ID_SEAT_MASTER` 属性。字符串只在回调执行期间有效。
 
-## eudev-to-Seat Manager integration
+## eudev 到 Seat Manager 的集成
 
-`udev-manager.c` connects the libudev adapter to the core Manager. It
-enumerates existing devices, applies add/change/remove events to the core
-device registry, and caches the syspath-to-Seat mapping so removal still
-works when udev no longer supplies a devnode or `ID_SEAT`.
+`udev-manager.c` 将 libudev 适配层连接到核心 Manager。它枚举现有设备，将 add/change/remove 事件应用到核心设备注册表，并缓存 syspath 到 Seat 的映射，以便设备移除时即使 udev 不再提供 devnode 或 `ID_SEAT`，也能找到原来的设备记录。
 
-Seat assignment is policy-driven. The policy callback selects a Seat and
-capability flags. Devices without an explicit policy decision are ignored;
-the adapter never silently assigns an unlabelled device to `seat0`. Only
-character devices are registered for session device access. The adapter
-creates a core Seat when the policy first selects it.
+Seat 分配由策略回调决定。回调选择 Seat 和设备能力标志；没有明确策略结果的设备会被忽略。适配层不会自行把未标记设备分配给 `seat0`。只有字符设备会注册为可供会话访问的设备。策略首次选择某个 Seat 时，适配层会在核心中创建它。
 
-## Event-loop integration
+守护进程当前只接纳 `tty`、`drm` 和 `input` 子系统的字符设备。设备若带有 `ID_SEAT`，优先使用该值；否则只有在管理员显式指定 `--default-seat ID` 时才会分配到默认 Seat。默认 Seat 参数仅是明确的部署策略，不会改变 eudev 属性，也不会启动或接管 eudevd。
 
-Open the monitor before enumerating the initial inventory so events arriving
-during enumeration remain queued:
+例如，在确认容器中的设备确实属于同一个逻辑 Seat 后，可以由 Dinit 服务配置传入：
 
-1. Create the core Manager.
-2. Open `dl_udev_seat_monitor`.
-3. Call `dl_udev_seat_monitor_enumerate()`.
-4. Add `dl_udev_seat_monitor_get_fd()` to the daemon's epoll loop, or call
-   `dl_udev_seat_monitor_poll()` from a poll-based loop.
-5. When readable, call `dl_udev_seat_monitor_dispatch()`, or let
-   `dl_udev_seat_monitor_poll()` wait and dispatch automatically.
+```sh
+dinit-logind --default-seat seat0
+```
 
-The poll helper dispatches at most 64 queued events per call to avoid
-starving other daemon work. A timeout of -1 waits indefinitely, 0 performs
-a non-blocking poll, and a positive timeout allows the caller to service
-other timers and IPC. EINTR is returned to the caller so it can process
-signals. The raw FD remains available for a daemon that already uses epoll.
+如果不指定该参数，只有带有明确 `ID_SEAT` 的受支持设备才会进入 Seat Manager。不要在多 Seat 主机上盲目启用默认 Seat。
 
-The adapter does not start eudevd, change udev rules, or independently grant
-device access. Device authorization and FD lifecycle remain core Manager
-responsibilities, with the login1 D-Bus transport still to be connected.
+## 事件循环集成
 
-## VT adapter
+先打开事件监视器，再枚举初始设备清单，以便枚举期间到达的事件仍保留在队列中：
 
-`vt.c` probes a caller-authorized VT device using `VT_GETSTATE` and
-`VT_GETMODE`. A missing VT interface is reported as
-`DL_VT_UNAVAILABLE`; it is not treated as a daemon-fatal error.
+1. 创建核心 Manager。
+2. 打开 `dl_udev_seat_monitor`。
+3. 调用 `dl_udev_seat_monitor_enumerate()`。
+4. 将 `dl_udev_seat_monitor_get_fd()` 加入守护进程的 epoll 循环，或在 poll 循环中调用 `dl_udev_seat_monitor_poll()`。
+5. FD 可读时调用 `dl_udev_seat_monitor_dispatch()`，也可以让 `dl_udev_seat_monitor_poll()` 自动等待并分发。
 
-The adapter can query the active VT, request `VT_ACTIVATE`, and wait for
-`VT_WAITACTIVE`. It does not set `VT_PROCESS`, install signal handlers,
-change keyboard mode, or take over a controlling terminal. Those operations
-require explicit Session/VT lifecycle policy and are intentionally not
-performed as a side effect of probing.
+poll 辅助函数每次最多分发 64 个排队事件，避免设备事件长期占用守护进程。超时 -1 表示无限等待，0 表示立即轮询，正数表示等待毫秒数。EINTR 会交给调用者处理，以便主循环及时处理信号。已经使用 epoll 的守护进程仍可直接使用原始 FD。
 
-## Build dependency
+适配层不会启动 eudevd、修改 udev 规则或自行授予设备访问权限。设备授权和 FD 生命周期仍由核心 Manager 负责；login1 D-Bus 传输层仍待接入。
 
-The Linux platform target uses the `libudev` pkg-config dependency. This is
-provided by eudev-compatible installations and is independent of systemd.
+## VT 适配层
+
+`vt.c` 使用 `VT_GETSTATE` 和 `VT_GETMODE` 探测调用者已授权打开的 VT 设备。缺少 VT 接口时返回 `DL_VT_UNAVAILABLE`，不会导致守护进程退出。
+
+适配层可以查询当前活动 VT、请求 `VT_ACTIVATE` 并等待 `VT_WAITACTIVE`。它不会设置 `VT_PROCESS`、安装信号处理器、修改键盘模式或接管控制终端。这些操作需要明确的 Session/VT 生命周期策略，不能作为探测的副作用。
+
+## 构建依赖
+
+Linux 平台目标依赖 pkg-config 的 `libudev`。eudev 兼容系统提供该接口，它与 systemd 无关。

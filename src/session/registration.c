@@ -122,10 +122,13 @@ dl_error dl_session_registration_apply(
         if (!valid_session_id(request->session_id) ||
             request->reserved != 0U || request->flags != 0U ||
             request->uid != 0U || request->leader_pid != 0U ||
-            request->seat_id[0] != '\0' || request->type[0] != '\0' ||
-            request->class_name[0] != '\0' || request->service[0] != '\0' ||
-            request->desktop[0] != '\0' || request->tty[0] != '\0' ||
-            request->display[0] != '\0') {
+            !bytes_are_zero(request->seat_id, sizeof(request->seat_id)) ||
+            !bytes_are_zero(request->type, sizeof(request->type)) ||
+            !bytes_are_zero(request->class_name, sizeof(request->class_name)) ||
+            !bytes_are_zero(request->service, sizeof(request->service)) ||
+            !bytes_are_zero(request->desktop, sizeof(request->desktop)) ||
+            !bytes_are_zero(request->tty, sizeof(request->tty)) ||
+            !bytes_are_zero(request->display, sizeof(request->display))) {
             result = DL_ERROR_INVALID_ARGUMENT;
             goto done;
         }

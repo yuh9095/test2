@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build and test ( ${{ matrix.compiler }} )
+    name: Build and test (${{ matrix.compiler }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -36,20 +36,13 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ninja-build
-          python3 -m pip install --user meson
+          sudo apt-get install --yes meson ninja-build
 
       - name: Configure strict C11 build
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          meson setup build
+        run: meson setup build
 
       - name: Compile
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          meson compile -C build
+        run: meson compile -C build
 
       - name: Run unit tests
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          meson test -C build --print-errorlogs
+        run: meson test -C build --print-errorlogs

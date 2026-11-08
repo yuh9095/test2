@@ -730,7 +730,7 @@ static int kill_session_processes(dl_manager *manager, const char *session_id,
     /* cgroup.kill is an unconditional SIGKILL operation, not a general
      * signal API. Never translate another signal into it. */
     if (signal_number != SIGKILL || p.cgroup_path == NULL ||
-        p.cgroup_path[0] == '\\0') {
+        p.cgroup_path[0] == '\0') {
         errno = ENOTSUP;
         goto done;
     }
@@ -758,8 +758,11 @@ static int kill_error_reply(sd_bus_message *m, int error_number)
     if (error_number == ENOENT || error_number == ESRCH)
         return sd_bus_reply_method_errorf(m, "org.freedesktop.login1.NoSuchSession",
             "Session leader or registered cgroup membership no longer exists");
+    if (error_number == EACCES || error_number == EPERM)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Permission denied for the requested process operation");
     if (error_number == ENOTSUP || error_number == EOPNOTSUPP ||
-        error_number == ENOSYS || error_number == EACCES || error_number == EPERM)
+        error_number == ENOSYS)
         return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
             "Requested process operation is not supported safely");
     return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,

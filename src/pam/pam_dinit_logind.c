@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "session/registration.h"
+#include "pam/lifecycle.h"
 #include <security/pam_modules.h>
 #include <errno.h>
 #include <pwd.h>
@@ -59,6 +60,12 @@ static int request_socket(const char *path, const dl_session_registration_reques
     return 0;
 }
 
+static int pam_transport(void *userdata,
+    const dl_session_registration_request *request)
+{
+    return request_socket((const char *)userdata, request);
+}
+
 static int user_uid(const char *name, uid_t *uid)
 {
     struct passwd pw,*found=NULL;
@@ -87,19 +94,10 @@ static int new_id(char out[65])
     out[36]='\0'; return 0;
 }
 
-static void close_request(dl_session_registration_request *q)
-{
-    q->operation=DL_SESSION_REGISTRATION_CLOSE;q->uid=0;q->leader_pid=0;q->flags=0;
-    memset(q->seat_id,0,sizeof(q->seat_id));memset(q->type,0,sizeof(q->type));
-    memset(q->class_name,0,sizeof(q->class_name));memset(q->service,0,sizeof(q->service));
-    memset(q->desktop,0,sizeof(q->desktop));memset(q->tty,0,sizeof(q->tty));
-    memset(q->display,0,sizeof(q->display));
-}
-
 PAM_EXTERN int pam_sm_open_session(pam_handle_t *p,int flags,int argc,const char **argv)
 {
     const char *path=socket_path(argc,argv),*user=NULL,*svc=NULL,*tty=NULL,*host=NULL;
-    const void *old=NULL; uid_t uid; dl_session_registration_request q; char *saved; int st;
+    const void *old=NULL; uid_t uid; dl_session_registration_request q;\n    dl_pam_session_state state = {{0}}; char *saved; int st;
     (void)flags;
     if(!path)return PAM_SESSION_ERR;
     if(pam_get_data(p,DATA_KEY,&old)==PAM_SUCCESS&&old)return PAM_SESSION_ERR;
@@ -121,20 +119,23 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t *p,int flags,int argc,const char
     saved=strdup(q.session_id);
     if(!saved){close_request(&q);(void)request_socket(path,&q);return PAM_BUF_ERR;}
     st=pam_set_data(p,DATA_KEY,saved,free_id);
-    if(st!=PAM_SUCCESS){close_request(&q);(void)request_socket(path,&q);free(saved);return st;}
+    if(st!=PAM_SUCCESS){
+        (void)dl_pam_session_close(&state,pam_transport,(void *)path);
+        free(saved);
+        return st;
+    }
     return PAM_SUCCESS;
 }
 
 PAM_EXTERN int pam_sm_close_session(pam_handle_t *p,int flags,int argc,const char **argv)
 {
     const char *path=socket_path(argc,argv);const void *data=NULL;
-    dl_session_registration_request q;int st;(void)flags;
+    dl_pam_session_state state = {{0}}; int st; (void)flags;
     if(!path)return PAM_SESSION_ERR;
     st=pam_get_data(p,DATA_KEY,&data);if(st!=PAM_SUCCESS||!data)return PAM_SUCCESS;
-    if(strlen((const char *)data)>=sizeof(q.session_id))return PAM_SESSION_ERR;
-    memset(&q,0,sizeof(q));q.magic=DL_SESSION_REGISTRATION_MAGIC;
-    q.version=DL_SESSION_REGISTRATION_VERSION;q.operation=DL_SESSION_REGISTRATION_CLOSE;
-    snprintf(q.session_id,sizeof(q.session_id),"%s",(const char *)data);
-    if(request_socket(path,&q)<0)return PAM_SESSION_ERR;
+    if(strlen((const char *)data)>=sizeof(state.session_id))return PAM_SESSION_ERR;
+    snprintf(state.session_id,sizeof(state.session_id),"%s",(const char *)data);
+    if(dl_pam_session_close(&state,pam_transport,(void *)path)!=0)
+        return PAM_SESSION_ERR;
     return pam_set_data(p,DATA_KEY,NULL,NULL)==PAM_SUCCESS?PAM_SUCCESS:PAM_SESSION_ERR;
 }

@@ -26,3 +26,7 @@ session required pam_dinit_logind.so socket=/run/dinit-logind/session.sock
 - This module does not authenticate users or replace PAM auth/account/password modules.
 
 Limitations: open and close must share the same PAM handle. The leader PID is the process executing open_session and must be validated against each login manager's PAM call pattern; it is not a complete process-membership map. Orphan cleanup after crashes, cross-process PAM handle recovery and Turnstile-specific hooks are not implemented. Validate PAM stack order and daemon startup ordering before deployment.
+
+## 生命周期状态机测试
+
+PAM 模块使用独立生命周期状态机：只有 OPEN 传输成功才记录 Session ID；重复 OPEN 被拒绝；CLOSE 传输失败时保留 ID 以便重试；CLOSE 成功后才清空 ID。该状态机通过可注入传输回调进行单元测试。这些测试验证状态转换，不等同于真实 PAM 堆栈或登录管理器的端到端测试。

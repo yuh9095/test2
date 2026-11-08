@@ -4,7 +4,7 @@ udev_dep=dependency('libudev')
 cc=meson.get_compiler('c')
 pam_lib=cc.find_library('pam',required:false)
 pam_header=cc.has_header('security/pam_modules.h')
-core_lib=static_library('dinit-logind-core',files('src/core/manager.c'),
+pam_lifecycle_lib=static_library('dinit-logind-pam-lifecycle',\n  files('src/pam/lifecycle.c'),include_directories:include_directories('src'),install:false)\npam_lifecycle_dep=declare_dependency(link_with:pam_lifecycle_lib,\n  include_directories:include_directories('src'))\ncore_lib=static_library('dinit-logind-core',files('src/core/manager.c'),
   include_directories:include_directories('src'),install:false)
 core_dep=declare_dependency(link_with:core_lib,include_directories:include_directories('src'))
 session_lib=static_library('dinit-logind-session-registration',
@@ -21,7 +21,7 @@ daemon=executable('dinit-logind','src/daemon/main.c',
   dependencies:[platform_dep,session_dep],install:true)
 if pam_lib.found() and pam_header
   shared_module('pam_dinit_logind','src/pam/pam_dinit_logind.c',
-    dependencies:pam_lib,include_directories:include_directories('src'),
+    dependencies:[pam_lib,pam_lifecycle_dep],include_directories:include_directories('src'),
     name_prefix:'',install:true,install_dir:join_paths(get_option('libdir'),'security'))
 endif
 test('daemon-help',daemon,args:['--help'],timeout:10)
@@ -36,3 +36,6 @@ plat_test=executable('test-linux-platform','tests/test-linux-platform.c',depende
 test('linux-platform-api',plat_test,timeout:30)
 udev_test=executable('test-udev-manager','tests/test-udev-manager.c',dependencies:platform_dep)
 test('udev-manager-integration',udev_test,timeout:30)
+
+pam_lifecycle_test=executable('test-pam-lifecycle','tests/test-pam-lifecycle.c',dependencies:pam_lifecycle_dep)
+test('pam-session-lifecycle',pam_lifecycle_test,timeout:30)

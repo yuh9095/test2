@@ -170,6 +170,10 @@ int main(void)
     reply=NULL;
     call_ok(client,"/org/freedesktop/login1/seat/seat0",
         "org.freedesktop.login1.Seat","ActivateSession","s","test-session");
+    call_not_supported(client,"/org/freedesktop/login1/seat/seat0",
+        "org.freedesktop.login1.Seat","SwitchToNext","");
+    call_not_supported(client,"/org/freedesktop/login1/seat/seat0",
+        "org.freedesktop.login1.Seat","SwitchToPrevious","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","Lock","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","Unlock","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","TakeControl","b",0);

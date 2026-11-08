@@ -28,7 +28,7 @@ Session：
 - `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。
 
 Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑
-活动 Session；`SwitchTo(vtnr)` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，
+活动 Session；`SwitchTo(vtnr)`、`SwitchToNext()`、`SwitchToPrevious()` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，
 容器没有可用 VT 时返回 NotSupported。Session 增加 `VTNr` 属性。
 User：导出 UID、Name、Sessions。
 
@@ -47,8 +47,9 @@ User 对象路径。
 - **设备暂停通知**：核心有 pause state 与超时原语，但尚未把 seatd/libseat 的
   pause/resume 回调映射为 login1 的 PauseDevice/ResumeDevice 信号，也未完成
   D-Bus FD 生命周期与控制器断连清理。
-- **VT**：目前支持 seat0 的 `SwitchTo(vtnr)`；`SwitchToNext/Previous`、
-  Seat.Terminate 仍未实现。
+- **VT**：支持 seat0 的 `SwitchTo(vtnr)`、`SwitchToNext()` 和 `SwitchToPrevious()`；
+  后两者依据已登记且具有 VTNr 的 Session 选择下一个/上一个 VT，并循环查找。
+  容器没有可用 VT 时返回 NotSupported。Seat.Terminate 仍未实现。
 - **Session 查询**：`GetSessionByPID` / `GetUserByPID` 当前只按已登记 Leader PID
   匹配，不是整个 Session 的进程索引。
 - **Turnstile/PAM**：已有特权注册协议和 PAM 生命周期基础；完整 Turnstile 会话属性、

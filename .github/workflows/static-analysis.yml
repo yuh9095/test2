@@ -1,0 +1,83 @@
+name: Static analysis and hardened builds
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: static-analysis-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gcc-analyzer:
+    name: GCC static analyzer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config \
+            libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+      - name: Configure with GCC analyzer
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -fanalyzer -Werror=analyzer-null-dereference \
+            -Werror=analyzer-use-after-free -Werror=analyzer-double-free
+        run: meson setup build -D b_sanitize=none
+      - name: Compile
+        run: |
+          meson configure build -Dc_args="$CFLAGS"
+          meson compile -C build
+      - name: Test
+        run: meson test -C build --print-errorlogs --no-rebuild
+
+  clang-analyzer:
+    name: Clang static analyzer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tools meson ninja-build pkg-config \
+            libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+      - name: Configure
+        env:
+          CC: clang
+        run: meson setup build
+      - name: Compile with scan-build
+        run: scan-build --status-bugs meson compile -C build
+      - name: Test
+        run: meson test -C build --print-errorlogs --no-rebuild
+
+  hardened:
+    name: Hardened release build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config \
+            libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+      - name: Configure hardened build
+        env:
+          CC: gcc
+          CFLAGS: -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+            -fstack-clash-protection -fno-common -fPIE \
+            -Wformat=2 -Werror=format-security -Werror=implicit-function-declaration
+          LDFLAGS: -Wl,-z,relro,-z,now -Wl,-z,noexecstack -pie
+        run: meson setup build --buildtype=release
+      - name: Compile
+        run: |
+          meson configure build -Dc_args="$CFLAGS" -Dc_link_args="$LDFLAGS"
+          meson compile -C build
+      - name: Test
+        run: meson test -C build --print-errorlogs --no-rebuild

@@ -1,0 +1,149 @@
+name: Native multi-distribution CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-distro-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  distro-build-test:
+    name: ${{ matrix.distro }} / ${{ matrix.arch }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        include:
+          - distro: Ubuntu 24.04
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: ubuntu:24.04
+            family: debian
+          - distro: Ubuntu 24.04
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: ubuntu:24.04
+            family: debian
+          - distro: Debian stable
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: debian:stable-slim
+            family: debian
+          - distro: Debian stable
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: debian:stable-slim
+            family: debian
+          - distro: Fedora latest
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: fedora:latest
+            family: fedora
+          - distro: Fedora latest
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: fedora:latest
+            family: fedora
+          - distro: Alpine edge (musl)
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: alpine:edge
+            family: alpine
+          - distro: Alpine edge (musl)
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: alpine:edge
+            family: alpine
+          - distro: openSUSE Tumbleweed
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: opensuse/tumbleweed:latest
+            family: suse
+          - distro: openSUSE Tumbleweed
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: opensuse/tumbleweed:latest
+            family: suse
+          - distro: Arch Linux
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: archlinux:latest
+            family: arch
+
+    env:
+      CC: ${{ matrix.compiler }}
+
+    steps:
+      - name: Install native distro dependencies
+        shell: sh
+        run: |
+          set -eu
+          case "${{ matrix.family }}" in
+            debian)
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential gcc clang meson ninja-build pkg-config \
+                libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+              ;;
+            fedora)
+              dnf install -y gcc clang meson ninja-build pkgconf-pkg-config \
+                systemd-devel libudev-devel pam-devel dbus-daemon
+              ;;
+            alpine)
+              apk add --no-cache build-base gcc clang meson ninja pkgconf \
+                eudev-dev elogind-dev dbus linux-pam-dev
+              ;;
+            suse)
+              zypper --non-interactive refresh
+              zypper --non-interactive install --no-recommends \
+                gcc clang meson ninja pkg-config libudev-devel \
+                libsystemd-devel pam-devel dbus-1-daemon
+              ;;
+            arch)
+              pacman -Syu --noconfirm --needed base-devel gcc clang meson ninja \
+                pkgconf systemd pam dbus
+              ;;
+            *)
+              echo "Unsupported distro family: ${{ matrix.family }}" >&2
+              exit 2
+              ;;
+          esac
+
+      - uses: actions/checkout@v4
+
+      - name: Record native execution environment
+        run: |
+          uname -a
+          getconf LONG_BIT
+          cat /etc/os-release
+          "${CC}" --version
+          meson --version
+          ninja --version
+
+      - name: Configure
+        run: meson setup build --buildtype=debug
+
+      - name: Compile with strict warnings
+        env:
+          CFLAGS: -O2 -g -fno-common -fstack-protector-strong -Wformat=2 -Werror=format-security
+        run: |
+          meson configure build -Dc_args="$CFLAGS"
+          meson compile -C build
+
+      - name: Run complete test suite
+        run: meson test -C build --print-errorlogs --no-rebuild
+
+      - name: Verify installed binary metadata
+        run: |
+          meson install -C build --destdir "$PWD/stage"
+          test -x stage/usr/local/bin/dinit-logind || find stage -type f -name dinit-logind -print

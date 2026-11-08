@@ -8,6 +8,7 @@ dinit-logind 使用 `libsystemd` 的 `sd-bus` API 连接系统 D-Bus；不启动
 Manager：
 - `ListSessions()`、`GetSession()`、`GetSessionByPID()`
 - `ListSeats()`、`GetSeat()`
+- `GetUser()`、`GetUserByPID()`、`ListUsers()`；User 对象提供 `UID`、`Name`、`Sessions`。
 - `TerminateSession()`、`KillSession()`（当前明确返回 NotSupported）
 
 Session：
@@ -52,7 +53,7 @@ User 对象路径。
 login1 服务端和独立客户端，不占用宿主机的系统总线，也不需要运行
 systemd 或 systemd-logind。
 
-该测试覆盖 Manager.GetSession/ListSessions、Session.Activate、
+该测试覆盖 Manager.GetSession/ListSessions、GetUser/GetUserByPID/ListUsers、Session.Activate、
 Lock/Unlock、TakeControl/ReleaseControl 的真实 D-Bus 调用路径。
 生产入口 `dl_login1_open()` 仍连接系统总线；测试专用入口
 `dl_login1_open_address()` 只接受显式 D-Bus 地址。

@@ -66,11 +66,17 @@ int main(void)
     const char *object_path_value=NULL;
     char object_path[256];
     int r;
+    dl_session_properties session_properties = {0};
     assert(address!=NULL && address[0] != 0);
     assert(dl_manager_create(&manager)==DL_OK);
     assert(dl_manager_add_seat(manager,"seat0")==DL_OK);
-    assert(dl_manager_add_session(manager,"test-session",(uint32_t)getuid(),
-        "seat0")==DL_OK);
+    session_properties.seat_id = "seat0";
+    session_properties.type = "tty";
+    session_properties.class_name = "user";
+    session_properties.service = "test";
+    session_properties.leader_pid = (uint32_t)getpid();
+    assert(dl_manager_add_session_with_properties(manager,"test-session",
+        (uint32_t)getuid(),&session_properties)==DL_OK);
     assert(dl_login1_open_address(&login1,manager,address)==0);
     state.login1=login1;
     atomic_init(&state.stopping,false);
@@ -96,6 +102,13 @@ int main(void)
     call_ok(client,object_path,"org.freedesktop.login1.Session","ReleaseControl","");
     call_ok(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","ListSessions","");
+
+    call_ok(client,"/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager","GetUser","u",(uint32_t)getuid());
+    call_ok(client,"/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager","GetUserByPID","u",(uint32_t)getpid());
+    call_ok(client,"/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager","ListUsers","");
 
     sd_bus_close_unref(client);
     atomic_store(&state.stopping,true);

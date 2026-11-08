@@ -145,6 +145,94 @@ static int get_session_pid(sd_bus_message *m, void *userdata, sd_bus_error *erro
     return sd_bus_reply_method_return(m, "o", obj);
 }
 
+
+static bool user_has_session(const dl_manager *manager, uint32_t uid)
+{
+    size_t i;
+    for (i = 0; i < dl_manager_get_session_count(manager); i++) {
+        dl_session_properties p = {0};
+        if (dl_manager_get_session_at(manager, i, &p) == DL_OK &&
+            p.uid == uid) return true;
+    }
+    return false;
+}
+
+static int user_object_path(uint32_t uid, char *out, size_t cap)
+{
+    int n = snprintf(out, cap, ROOT_PATH "/user/_%u", uid);
+    return n < 0 ? -EIO : ((size_t)n >= cap ? -ENAMETOOLONG : 0);
+}
+
+static int get_user(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    uint32_t uid = 0;
+    char object[128];
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_read(m, "u", &uid)) < 0) return r;
+    if (!user_has_session(userdata, uid))
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "No active User object for UID %u", uid);
+    if ((r = user_object_path(uid, object, sizeof(object))) < 0) return r;
+    return sd_bus_reply_method_return(m, "o", object);
+}
+
+static int get_user_by_pid(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    uint32_t pid = 0;
+    dl_session_properties p = {0};
+    char object[128];
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_read(m, "u", &pid)) < 0) return r;
+    if (dl_manager_find_session_by_leader_pid(userdata, pid, &p) != DL_OK)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "No registered Session has leader PID %u", pid);
+    if ((r = user_object_path(p.uid, object, sizeof(object))) < 0) return r;
+    return sd_bus_reply_method_return(m, "o", object);
+}
+
+static int list_users(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    dl_manager *manager = userdata;
+    sd_bus_message *reply = NULL;
+    size_t i, j, count = dl_manager_get_session_count(manager);
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_new_method_return(m, &reply)) < 0) return r;
+    if ((r = sd_bus_message_open_container(reply, 'a', "(uso)")) < 0)
+        goto fail;
+    for (i = 0; i < count; i++) {
+        dl_session_properties p = {0};
+        char name[16384], object[128];
+        bool seen = false;
+        if (dl_manager_get_session_at(manager, i, &p) != DL_OK) {
+            r = -EIO;
+            goto fail;
+        }
+        for (j = 0; j < i; j++) {
+            dl_session_properties previous = {0};
+            if (dl_manager_get_session_at(manager, j, &previous) == DL_OK &&
+                previous.uid == p.uid) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        if ((r = user_name(p.uid, name, sizeof(name))) < 0) goto fail;
+        if ((r = user_object_path(p.uid, object, sizeof(object))) < 0)
+            goto fail;
+        if ((r = sd_bus_message_append(reply, "(uso)", p.uid, name,
+                object)) < 0) goto fail;
+    }
+    if ((r = sd_bus_message_close_container(reply)) < 0) goto fail;
+    return send_reply(m, reply);
+fail:
+    sd_bus_message_unref(reply);
+    return r;
+}
+
 static int list_seats(sd_bus_message *m, void *userdata, sd_bus_error *error)
 {
     dl_manager *mgr = userdata;
@@ -393,11 +481,40 @@ static int prop_user_uid(sd_bus*b,const char*p,const char*i,const char*n,sd_bus_
 static int prop_user_name(sd_bus*b,const char*p,const char*i,const char*n,sd_bus_message*m,void*u,sd_bus_error*e)
 {uint32_t uid;char buf[16384];int r;(void)b;(void)i;(void)n;(void)u;(void)e;if(user_path_uid(p,&uid)<0)return -ENOENT;if((r=user_name(uid,buf,sizeof(buf)))<0)return r;return sd_bus_message_append(m,"s",buf);}
 
+static int prop_user_sessions(sd_bus *b, const char *path, const char *interface,
+    const char *property, sd_bus_message *reply, void *userdata, sd_bus_error *error)
+{
+    uint32_t uid;
+    size_t i, count;
+    int r;
+    (void)b; (void)interface; (void)property; (void)error;
+    if (user_path_uid(path, &uid) < 0) return -ENOENT;
+    count = dl_manager_get_session_count(userdata);
+    if ((r = sd_bus_message_open_container(reply, 'a', "(so)")) < 0)
+        return r;
+    for (i = 0; i < count; i++) {
+        dl_session_properties p = {0};
+        char object[256];
+        if (dl_manager_get_session_at(userdata, i, &p) != DL_OK)
+            return -EIO;
+        if (p.uid != uid) continue;
+        if ((r = make_path(SESSION_PATH, p.session_id, object,
+                sizeof(object))) < 0) return r;
+        if ((r = sd_bus_message_append(reply, "(so)", p.session_id,
+                object)) < 0) return r;
+    }
+    return sd_bus_message_close_container(reply);
+}
+
+
 static const sd_bus_vtable manager_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_METHOD("ListSessions","","a(susso)",list_sessions,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSession","s","o",get_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSessionByPID","u","o",get_session_pid,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("GetUser","u","o",get_user,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("GetUserByPID","u","o",get_user_by_pid,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("ListUsers","","a(uso)",list_users,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ListSeats","","a(so)",list_seats,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSeat","s","o",get_seat,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("TerminateSession","s","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
@@ -435,6 +552,7 @@ static const sd_bus_vtable user_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_PROPERTY("UID","u",prop_user_uid,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Name","s",prop_user_name,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Sessions","a(so)",prop_user_sessions,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_VTABLE_END
 };
 static const sd_bus_vtable seat_vtable[] = {

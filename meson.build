@@ -10,6 +10,8 @@ project(
   ],
 )
 
+udev_dep = dependency('libudev')
+
 core_sources = files('src/core/manager.c')
 
 core_lib = static_library(
@@ -24,6 +26,23 @@ core_dep = declare_dependency(
   include_directories: include_directories('src'),
 )
 
+linux_platform_lib = static_library(
+  'dinit-logind-linux-platform',
+  files(
+    'src/platform/linux/udev.c',
+    'src/platform/linux/vt.c',
+  ),
+  dependencies: udev_dep,
+  include_directories: include_directories('src'),
+  install: false,
+)
+
+linux_platform_dep = declare_dependency(
+  link_with: linux_platform_lib,
+  dependencies: udev_dep,
+  include_directories: include_directories('src'),
+)
+
 test_exe = executable(
   'test-core',
   'tests/test-core.c',
@@ -31,3 +50,11 @@ test_exe = executable(
 )
 
 test('core-model', test_exe, timeout: 30)
+
+platform_test_exe = executable(
+  'test-linux-platform',
+  'tests/test-linux-platform.c',
+  dependencies: linux_platform_dep,
+)
+
+test('linux-platform-api', platform_test_exe, timeout: 30)

@@ -1,21 +1,15 @@
 name: C11 Build and Test
-
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: build-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build:
     name: Build and test (${{ matrix.compiler }})
@@ -24,25 +18,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        compiler:
-          - gcc
-          - clang
+        compiler: [gcc, clang]
     env:
       CC: ${{ matrix.compiler }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes meson ninja-build libudev-dev
-
-      - name: Configure strict C11 build
-        run: meson setup build
-
-      - name: Compile
-        run: meson compile -C build
-
-      - name: Run unit tests
-        run: meson test -C build --print-errorlogs
+          sudo apt-get install --yes meson ninja-build libudev-dev libpam0g-dev
+      - run: meson setup build
+      - run: meson compile -C build
+      - run: meson test -C build --print-errorlogs

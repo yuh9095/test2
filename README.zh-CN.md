@@ -1,14 +1,12 @@
 # dinit-logind
 
-面向使用 [Dinit](https://github.com/davmac314/dinit) 的 Linux 系统的登录、会话、Seat 与设备管理服务。
+登录、Session、Seat 与设备管理服务，面向使用 Dinit 的 Linux 系统。
 
-[English](README.md) | 简体中文
+> 项目处于早期开发阶段。已有 C11 核心状态模型、libudev/eudev 设备集成、特权 Session 注册 Socket，以及可选构建的 PAM Session 模块。login1 D-Bus、完整 Turnstile hook、libseat FD 交接和完整 elogind API 兼容尚未完成。
 
-> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev/eudev 设备集成，以及可由 Dinit 监督的前台守护进程。login1 D-Bus、完整 PAM 模块和 Turnstile hook、libseat FD 交接和完整 elogind API 兼容仍未完成。
+## 构建
 
-## 构建与测试
-
-依赖：C11 编译器、Meson、Ninja，以及 libudev 开发文件。
+依赖 C11 编译器、Meson、Ninja 和 libudev 开发文件。构建 PAM 模块还需要 PAM 开发文件。
 
 ```sh
 meson setup build
@@ -16,85 +14,25 @@ meson compile -C build
 meson test -C build --print-errorlogs
 ```
 
-构建使用严格 ISO C11 模式（`-std=c11`），不使用 GNU11。GitHub Actions 会分别使用 GCC 和 Clang 编译并运行测试。
+## PAM
 
-## 项目方向
+安装 PAM 开发文件后会构建 `pam_dinit_logind.so`。在 PAM service 的 session 阶段配置：
 
-通过有选择地吸收成熟项目的设计与实现，构建一套统一的桌面及系统登录基础设施：
+```
+session required pam_dinit_logind.so socket=/run/dinit-logind/session.sock
+```
 
-- **elogind**：借鉴 login1 D-Bus 模型与实现、用户和会话生命周期、Inhibitor 及电源管理行为。
-- **seatd / libseat**：吸收 Seat 激活、设备访问和文件描述符交接机制，同时保留现有 libseat 客户端生态。
-- **Turnstile**：吸收适用的 PAM 和用户会话生命周期机制，包括合适的运行时目录管理方式。
-- **Dinit**：使用原生服务生命周期管理和现有 cgroup 管理能力。
-- **eudev**：提供设备发现与热插拔事件，并继续作为独立设备管理器运行。
+模块在 open_session 注册 Session，在 close_session 注销相同 Session ID；不执行认证，不替代其他 PAM 模块。Seat 不从 TTY 猜测。限制与调用流程见 `docs/pam-session-integration.zh-CN.md`。
 
-本项目的目标是整合并重构架构，而不是让多套独立的会话或 Seat 管理器并行运行。
+## 架构原则
 
-## 核心设计原则
+- Session、Seat、Device 只有一个权威核心状态模型。
+- 不依赖 systemd PID 1；Dinit 管理服务生命周期和自身 cgroup。
+- eudevd 独立运行，dinit-logind 消费设备事件。
+- SSH、TTY、图形和无头 Session 均可存在；无 Seat 会话不伪装成 seat0。
+- 未实现的 login1/libseat API 不得虚报成功。
+- 面向 glibc 和 musl；引入第三方源码前审查许可证。
 
-1. User、Session、Seat 和 Device 使用唯一、权威的内部状态模型。
-2. 不要求安装 systemd，也不依赖 systemd PID 1。
-3. 保持 Dinit 原生 cgroup 实现不变。本项目不以重建 systemd 沙箱、Slice 或 Scope 机制为目标。
-4. 在能够正确实现其行为的前提下，兼容公开的 login1 D-Bus 与 libseat 客户端接口。
-5. 支持图形和非图形会话，包括 X11、Wayland、TTY、SSH，以及无头和容器环境。
-6. 图形设备访问属于可选能力。无头系统仍须能够管理用户、PAM 会话、运行时目录、Inhibitor 和会话生命周期。
-7. 不得对尚未实现的 API 虚报成功。暂不支持的操作必须返回明确且适当的错误。
-8. 同时面向 glibc 和 musl 设计与测试。
-9. 在导入任何上游代码前，审查代码来源、许可证及依赖边界。
+首个验证目标是 DroidSpaces 容器中的 XFCE4/X11、X11/VNC，以及纯 TTY、SSH 和无头 Session。图形栈不是核心服务依赖。
 
-## 当前实现范围
-
-核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。Session 支持可选 Seat，并保存 type/class、PAM service、desktop、TTY、display、leader PID 和 remote 标志，因此 SSH、无头及后台会话不必伪装成图形 Seat 会话。
-
-Linux 平台层通过 libudev 枚举设备并监听 eudev 热插拔事件。Seat 适配层应用调用者提供的策略，缓存 syspath 到 Seat 的映射以保证设备移除时能找到原记录，并将经过设备身份校验的字符设备节点注册到核心。前台 `dinit-logind` 守护进程目前接纳 `tty`、`drm` 和 `input` 子系统设备：优先使用明确的 `ID_SEAT` 属性；管理员也可以通过可选参数 `--default-seat ID`，将没有 `ID_SEAT` 的受支持设备分配给指定 Seat。不指定该参数时，不会擅自把未标记设备分配到 `seat0`。
-
-核心 Session 查询接口提供按 leader PID 查找、Session 数量和按索引读取，供后续 login1 的 `GetSessionByPID` 与 `ListSessions` 等 D-Bus 方法复用。按 PID 查询目前只匹配 leader，不扫描进程树。
-
-## Session 注册通道
-
-`src/session/registration.c` 定义固定长度、带版本号的 OPEN/CLOSE 消息，并严格校验消息长度、Session ID、字段终止符、标志位和保留字段。`src/session/socket.c` 提供 Linux Unix `SOCK_SEQPACKET` 监听器，通过 `SO_PEERCRED` 读取真实 peer UID，Socket 权限设为 0600，默认只接受 root 对端。守护进程可用 `--session-socket /run/dinit-logind/session.sock` 显式启用；父目录必须由系统服务预先创建并保护。
-
-此通道是为特权 PAM/Turnstile 入口准备的，不是供普通桌面客户端使用。OPEN 的 UID、leader PID、Seat 和会话属性只有在 peer UID 已通过授权后才会进入核心；SSH 和无头会话可不带 Seat。当前尚未提供 PAM 模块、Turnstile hook 或异常退出后的持久化恢复机制。详细协议见 `docs/session-registration.zh-CN.md`。
-
-## 计划中的内部模块
-
-- 用户与会话生命周期管理
-- Seat 与设备管理
-- VT 和图形会话集成
-- PAM 集成与运行时目录管理
-- login1 D-Bus 服务
-- 电源管理与 Inhibitor
-- libseat 兼容层
-- Dinit 与 udev 集成
-
-共享状态必须只有一个真实来源。外部协议和兼容层应调用统一核心，不得各自维护互相冲突的状态。
-
-## 首个验证目标
-
-首个端到端目标是在 DroidSpaces Linux 容器中运行 XFCE4/X11，并在条件允许时验证 X11/VNC 远程访问路径。
-
-同时必须验证非图形登录与会话管理。不能因为首个测试目标使用 X11/VNC，就让 X11 或 VNC 成为核心服务的依赖。
-
-后续验证目标包括物理 Linux 系统、Wayland 合成器、KDE Plasma、GNOME 和无头系统。
-
-## 开发方式
-
-采用渐进式实现，但从一开始就按完整系统进行架构设计和集成测试。在导入上游实现代码前，先完成：
-
-1. 盘点相关上游项目及其实际具备的能力。
-2. 记录许可证、代码来源和必要的版权声明。
-3. 明确共享对象的所有权及生命周期边界。
-4. 定义 login1 和 libseat 的兼容要求。
-5. 建立 glibc 与 musl 的构建和测试覆盖。
-
-不假定任何一个上游项目已经具备这里列出的全部能力；每项功能都必须通过源码审查和实际测试确认。
-
-## 许可证
-
-项目许可证尚未确定。在完成许可证兼容性和署名要求审查前，不应将第三方源码复制到本仓库。
-
-## 已引入 seatd / libseat 源码
-
-已将上游 seatd/libseat 0.9.3 的 Linux 源码集放入 `third_party/seatd/`，并保留 MIT 许可证及固定版本来源记录，详见 `third_party/seatd/UPSTREAM.md`。源码包括 seatd 服务端、libseat 公共 API 与后端、Linux 设备和 VT 管理、上游测试、示例及手册。
-
-目前这是源码引入阶段：dinit-logind 根构建尚未编译或启动 vendored seatd，也不宣称已经完成运行时集成。vendored Meson 默认关闭 libseat 的 logind 后端，避免隐式引入 libsystemd/elogind 依赖。后续集成必须确保 Seat/Session 只有一个权威状态源。
+项目许可证尚未确定；第三方源码许可证和署名必须在引入前审查。

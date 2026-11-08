@@ -75,10 +75,8 @@ int main(void)
     state.login1=login1;
     atomic_init(&state.stopping,false);
     assert(pthread_create(&thread,NULL,dispatch_thread,&state)==0);
-    assert(sd_bus_new(&client)==0);
-    assert(sd_bus_set_address(client,address)==0);
-    assert(sd_bus_set_bus_client(client,1)==0);
-    assert(sd_bus_start(client)==0);
+    assert(setenv("DBUS_SYSTEM_BUS_ADDRESS",address,1)==0);
+    assert(sd_bus_open_system(&client)==0);
 
     r=sd_bus_call_method(client,"org.freedesktop.login1",
         "/org/freedesktop/login1","org.freedesktop.login1.Manager",

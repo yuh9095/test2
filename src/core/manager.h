@@ -83,6 +83,33 @@ dl_error dl_manager_release_device(
     uint32_t major_number,
     uint32_t minor_number);
 
+/*
+ * A graceful pause must be acknowledged with complete_device_pause().
+ * A forced pause takes effect immediately. Device removal is represented
+ * by remove_device(), which also drops any outstanding claim.
+ */
+dl_error dl_manager_pause_device(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    bool force);
+dl_error dl_manager_complete_device_pause(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number);
+dl_error dl_manager_resume_device(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number);
+dl_device_pause_state dl_manager_get_device_pause_state(
+    const dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number);
+
 uint64_t dl_manager_device_generation(
     const dl_manager *manager,
     const char *seat_id,

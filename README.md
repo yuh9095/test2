@@ -3,6 +3,8 @@
 A login, session, seat, and device-management service for systems using
 [Dinit](https://github.com/davmac314/dinit).
 
+[简体中文](README.zh-CN.md)
+
 > **Status: initial project setup.** The architecture and source-code provenance
 > are being evaluated. This repository does not yet provide a working logind
 > implementation.

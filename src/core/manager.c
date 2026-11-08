@@ -99,7 +99,7 @@ static dl_seat *find_session_seat(
     if (session == NULL || session->seat_id == NULL) {
         return NULL;
     }
-    return find_session_seat(manager, session);
+    return find_seat(manager, session->seat_id);
 }
 
 static char *copy_optional_string(const char *value)

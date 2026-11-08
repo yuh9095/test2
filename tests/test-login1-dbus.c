@@ -296,14 +296,14 @@ int main(void)
     if (geteuid() == 0) {
         int status = 0;
         dl_session_properties p = {0};
-        call_ok(client, "/org/freedesktop/login1/seat/seat-test",
+        call_ok(client, "/org/freedesktop/login1/seat/seat_2dtest",
             "org.freedesktop.login1.Seat", "Terminate", "");
         assert(dl_manager_get_session_properties(manager,
             "seat-term-test", &p) == DL_OK);
         assert(waitpid((pid_t)p.leader_pid, &status, 0) == (pid_t)p.leader_pid);
         assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
     } else {
-        call_error_name(client, "/org/freedesktop/login1/seat/seat-test",
+        call_error_name(client, "/org/freedesktop/login1/seat/seat_2dtest",
             "org.freedesktop.login1.Seat", "Terminate",
             SD_BUS_ERROR_ACCESS_DENIED, "");
         {

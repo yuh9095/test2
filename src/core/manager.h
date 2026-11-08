@@ -48,6 +48,8 @@ typedef enum dl_error {
  * Pointers returned by get_session_properties() are borrowed until removal.
  */
 typedef struct dl_session_properties {
+    const char *session_id; /* populated by query APIs; ignored on registration */
+    uint32_t uid;           /* populated by query APIs; ignored on registration */
     const char *seat_id;
     const char *type;
     const char *class_name;
@@ -109,6 +111,17 @@ dl_error dl_manager_add_session_with_properties(
 dl_error dl_manager_get_session_properties(
     const dl_manager *manager,
     const char *session_id,
+    dl_session_properties *out_properties);
+/* Matches the registered Session leader only; PID 0 is invalid. */
+dl_error dl_manager_find_session_by_leader_pid(
+    const dl_manager *manager,
+    uint32_t leader_pid,
+    dl_session_properties *out_properties);
+/* Session order is unspecified and may change after registration/removal. */
+size_t dl_manager_get_session_count(const dl_manager *manager);
+dl_error dl_manager_get_session_at(
+    const dl_manager *manager,
+    size_t index,
     dl_session_properties *out_properties);
 dl_error dl_manager_remove_session(dl_manager *manager, const char *session_id);
 dl_error dl_manager_set_active_session(

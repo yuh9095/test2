@@ -107,6 +107,23 @@ static char *copy_optional_string(const char *value)
     return value == NULL ? NULL : copy_string(value);
 }
 
+static dl_session *find_session_by_leader_pid(
+    const dl_manager *manager,
+    uint32_t leader_pid)
+{
+    dl_session *session;
+
+    if (leader_pid == 0U) {
+        return NULL;
+    }
+    for (session = manager->sessions; session != NULL; session = session->next) {
+        if (session->leader_pid == leader_pid) {
+            return session;
+        }
+    }
+    return NULL;
+}
+
 static dl_session *find_session(
     const dl_manager *manager,
     const char *session_id)
@@ -423,7 +440,9 @@ dl_error dl_manager_add_session_with_properties(
     if (seat_id != NULL && seat_id[0] == '\0') {
         return DL_ERROR_INVALID_ARGUMENT;
     }
-    if (find_session(manager, session_id) != NULL) {
+    if (find_session(manager, session_id) != NULL ||
+        (properties->leader_pid != 0U &&
+         find_session_by_leader_pid(manager, properties->leader_pid) != NULL)) {
         return DL_ERROR_ALREADY_EXISTS;
     }
     if (seat_id != NULL && find_seat(manager, seat_id) == NULL) {
@@ -501,6 +520,8 @@ dl_error dl_manager_get_session_properties(
         return DL_ERROR_NOT_FOUND;
     }
 
+    out_properties->session_id = session->id;
+    out_properties->uid = session->uid;
     out_properties->seat_id = session->seat_id;
     out_properties->type = session->type;
     out_properties->class_name = session->class_name;
@@ -511,6 +532,62 @@ dl_error dl_manager_get_session_properties(
     out_properties->leader_pid = session->leader_pid;
     out_properties->remote = session->remote;
     return DL_OK;
+}
+
+dl_error dl_manager_find_session_by_leader_pid(
+    const dl_manager *manager,
+    uint32_t leader_pid,
+    dl_session_properties *out_properties)
+{
+    const dl_session *session;
+
+    if (manager == NULL || leader_pid == 0U || out_properties == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    session = find_session_by_leader_pid(manager, leader_pid);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    return dl_manager_get_session_properties(
+        manager, session->id, out_properties);
+}
+
+size_t dl_manager_get_session_count(const dl_manager *manager)
+{
+    const dl_session *session;
+    size_t count = 0U;
+
+    if (manager == NULL) {
+        return 0U;
+    }
+    for (session = manager->sessions; session != NULL; session = session->next) {
+        if (count == SIZE_MAX) {
+            return SIZE_MAX;
+        }
+        count++;
+    }
+    return count;
+}
+
+dl_error dl_manager_get_session_at(
+    const dl_manager *manager,
+    size_t index,
+    dl_session_properties *out_properties)
+{
+    const dl_session *session;
+    size_t current = 0U;
+
+    if (manager == NULL || out_properties == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    for (session = manager->sessions; session != NULL; session = session->next) {
+        if (current == index) {
+            return dl_manager_get_session_properties(
+                manager, session->id, out_properties);
+        }
+        current++;
+    }
+    return DL_ERROR_NOT_FOUND;
 }
 
 dl_error dl_manager_remove_session(dl_manager *manager, const char *session_id)

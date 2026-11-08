@@ -94,3 +94,6 @@ Linux 平台层通过 libudev 枚举设备并监听 eudev 热插拔事件。Seat
 已将上游 seatd/libseat 0.9.3 的 Linux 源码集放入 `third_party/seatd/`，并保留 MIT 许可证及固定版本来源记录，详见 `third_party/seatd/UPSTREAM.md`。源码包括 seatd 服务端、libseat 公共 API 与后端、Linux 设备和 VT 管理、上游测试、示例及手册。
 
 目前这是源码引入阶段：dinit-logind 根构建尚未编译或启动 vendored seatd，也不宣称已经完成运行时集成。vendored Meson 默认关闭 libseat 的 logind 后端，避免隐式引入 libsystemd/elogind 依赖。后续集成必须确保 Seat/Session 只有一个权威状态源。
+
+
+核心 Session 查询接口还提供按 leader PID 查找、Session 数量和按索引读取，供 login1 的 `GetSessionByPID` 与 `ListSessions` 等 D-Bus 方法复用。leader PID 在核心模型内唯一；PID 0 表示未提供 leader，不参与按 PID 查找。

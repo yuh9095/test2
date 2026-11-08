@@ -190,11 +190,27 @@ static void test_unseated_remote_session_metadata(void)
     assert(dl_manager_create(&manager) == DL_OK);
     assert(dl_manager_add_session_with_properties(
         manager, "ssh-1", 1000U, &input) == DL_OK);
+    assert(dl_manager_add_session_with_properties(
+        manager, "ssh-duplicate-pid", 1001U, &input) ==
+        DL_ERROR_ALREADY_EXISTS);
     assert(dl_manager_get_session_properties(
         manager, "ssh-1", &output) == DL_OK);
+    assert(dl_manager_get_session_count(manager) == 1U);
+    assert(dl_manager_get_session_at(manager, 0U, &output) == DL_OK);
+    assert(dl_manager_find_session_by_leader_pid(
+        manager, 4321U, &output) == DL_OK);
+    assert(dl_manager_find_session_by_leader_pid(
+        manager, 4322U, &output) == DL_ERROR_NOT_FOUND);
+    assert(dl_manager_find_session_by_leader_pid(
+        manager, 0U, &output) == DL_ERROR_INVALID_ARGUMENT);
+    assert(dl_manager_get_session_at(
+        manager, 1U, &output) == DL_ERROR_NOT_FOUND);
     assert(output.seat_id == NULL);
     assert(output.remote);
     assert(output.leader_pid == 4321U);
+    assert(output.uid == 1000U);
+    assert(output.session_id != NULL &&
+        strcmp(output.session_id, "ssh-1") == 0);
     assert(output.type != NULL && strcmp(output.type, "tty") == 0);
     assert(output.class_name != NULL &&
         strcmp(output.class_name, "user") == 0);

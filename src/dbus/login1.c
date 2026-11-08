@@ -1,0 +1,371 @@
+#define _GNU_SOURCE
+#include "dbus/login1.h"
+#include <systemd/sd-bus.h>
+#include <errno.h>
+#include <pwd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define BUS_NAME "org.freedesktop.login1"
+#define ROOT_PATH "/org/freedesktop/login1"
+#define SESSION_PATH ROOT_PATH "/session"
+#define SEAT_PATH ROOT_PATH "/seat"
+
+struct dl_login1 {
+    sd_bus *bus;
+    sd_bus_slot *manager_slot;
+    sd_bus_slot *session_slot;
+    sd_bus_slot *seat_slot;
+};
+
+static int make_path(const char *prefix, const char *id, char *out, size_t cap)
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t n = strlen(prefix), i;
+    if (!id || !*id || n + 2U >= cap) return -EINVAL;
+    memcpy(out, prefix, n); out[n++] = '/';
+    for (i = 0; id[i]; i++) {
+        unsigned char c = (unsigned char)id[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9')) {
+            if (n + 1U >= cap) return -ENAMETOOLONG;
+            out[n++] = (char)c;
+        } else {
+            if (n + 3U >= cap) return -ENAMETOOLONG;
+            out[n++] = '_'; out[n++] = hex[c >> 4]; out[n++] = hex[c & 15U];
+        }
+    }
+    out[n] = '\0';
+    return 0;
+}
+
+static int unhex(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static int path_id(const char *path, const char *prefix, char *out, size_t cap)
+{
+    const char *p;
+    size_t n = 0;
+    if (!path || !prefix || !out || strncmp(path, prefix, strlen(prefix)) ||
+        path[strlen(prefix)] != '/') return -EINVAL;
+    p = path + strlen(prefix) + 1U;
+    if (!*p || strchr(p, '/')) return -EINVAL;
+    while (*p) {
+        unsigned char c;
+        if (*p == '_') {
+            int a, b;
+            if (!p[1] || !p[2] || (a = unhex(p[1])) < 0 ||
+                (b = unhex(p[2])) < 0) return -EINVAL;
+            c = (unsigned char)((a << 4) | b); p += 3;
+        } else c = (unsigned char)*p++;
+        if (!c || n + 1U >= cap) return -ENAMETOOLONG;
+        out[n++] = (char)c;
+    }
+    out[n] = '\0';
+    return 0;
+}
+
+static int user_name(uint32_t uid, char *buf, size_t cap)
+{
+    struct passwd pw, *found = NULL;
+    int r = getpwuid_r((uid_t)uid, &pw, buf, cap, &found);
+    if (r) return -r;
+    if (!found || !pw.pw_name || !*pw.pw_name)
+        (void)snprintf(buf, cap, "%u", uid);
+    return 0;
+}
+
+static int send_reply(sd_bus_message *call, sd_bus_message *reply)
+{
+    int r = sd_bus_send(sd_bus_message_get_bus(call), reply, NULL);
+    sd_bus_message_unref(reply);
+    return r < 0 ? r : 1;
+}
+
+static int list_sessions(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    dl_manager *mgr = userdata;
+    sd_bus_message *reply = NULL;
+    size_t i, count = dl_manager_get_session_count(mgr);
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_new_method_return(m, &reply)) < 0) return r;
+    if ((r = sd_bus_message_open_container(reply, 'a', "(susso)")) < 0) goto fail;
+    for (i = 0; i < count; i++) {
+        dl_session_properties p = {0};
+        char obj[256], name[16384];
+        if (dl_manager_get_session_at(mgr, i, &p) != DL_OK) { r = -EIO; goto fail; }
+        if ((r = make_path(SESSION_PATH, p.session_id, obj, sizeof(obj))) < 0) goto fail;
+        if ((r = user_name(p.uid, name, sizeof(name))) < 0) goto fail;
+        if ((r = sd_bus_message_append(reply, "(susso)", p.session_id,
+                p.uid, name, p.seat_id ? p.seat_id : "", obj)) < 0) goto fail;
+    }
+    if ((r = sd_bus_message_close_container(reply)) < 0) goto fail;
+    return send_reply(m, reply);
+fail:
+    sd_bus_message_unref(reply);
+    return r;
+}
+
+static int get_session(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    const char *id = NULL;
+    dl_session_properties p = {0};
+    char obj[256];
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_read(m, "s", &id)) < 0) return r;
+    if (dl_manager_get_session_properties(userdata, id, &p) != DL_OK)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "Session '%s' does not exist", id);
+    if ((r = make_path(SESSION_PATH, id, obj, sizeof(obj))) < 0) return r;
+    return sd_bus_reply_method_return(m, "o", obj);
+}
+
+static int get_session_pid(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    uint32_t pid = 0;
+    dl_session_properties p = {0};
+    char obj[256];
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_read(m, "u", &pid)) < 0) return r;
+    if (dl_manager_find_session_by_leader_pid(userdata, pid, &p) != DL_OK)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "No registered Session has leader PID %u", pid);
+    if ((r = make_path(SESSION_PATH, p.session_id, obj, sizeof(obj))) < 0) return r;
+    return sd_bus_reply_method_return(m, "o", obj);
+}
+
+static int list_seats(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    dl_manager *mgr = userdata;
+    sd_bus_message *reply = NULL;
+    size_t i, count = dl_manager_get_seat_count(mgr);
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_new_method_return(m, &reply)) < 0) return r;
+    if ((r = sd_bus_message_open_container(reply, 'a', "(so)")) < 0) goto fail;
+    for (i = 0; i < count; i++) {
+        const char *id = NULL;
+        char obj[256];
+        if (dl_manager_get_seat_at(mgr, i, &id) != DL_OK) { r = -EIO; goto fail; }
+        if ((r = make_path(SEAT_PATH, id, obj, sizeof(obj))) < 0) goto fail;
+        if ((r = sd_bus_message_append(reply, "(so)", id, obj)) < 0) goto fail;
+    }
+    if ((r = sd_bus_message_close_container(reply)) < 0) goto fail;
+    return send_reply(m, reply);
+fail:
+    sd_bus_message_unref(reply);
+    return r;
+}
+
+static int get_seat(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    const char *id = NULL, *known = NULL;
+    char obj[256];
+    size_t i;
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_read(m, "s", &id)) < 0) return r;
+    for (i = 0; i < dl_manager_get_seat_count(userdata); i++) {
+        if (dl_manager_get_seat_at(userdata, i, &known) == DL_OK &&
+            strcmp(id, known) == 0) {
+            if ((r = make_path(SEAT_PATH, id, obj, sizeof(obj))) < 0) return r;
+            return sd_bus_reply_method_return(m, "o", obj);
+        }
+    }
+    return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+        "Seat '%s' does not exist", id);
+}
+
+static int session_lookup(const char *path, void *userdata,
+    dl_session_properties *p)
+{
+    char id[128];
+    int r = path_id(path, SESSION_PATH, id, sizeof(id));
+    if (r < 0) return r;
+    return dl_manager_get_session_properties(userdata, id, p) == DL_OK ? 0 : -ENOENT;
+}
+
+static int prop_session_id(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    dl_session_properties s={0}; int r;
+    (void)b;(void)i;(void)n;(void)e;
+    if ((r=session_lookup(p,u,&s))<0) return r;
+    return sd_bus_message_append(m,"s",s.session_id);
+}
+static int prop_session_user(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    dl_session_properties s={0}; char obj[128]; int r;
+    (void)b;(void)i;(void)n;(void)e;
+    if ((r=session_lookup(p,u,&s))<0) return r;
+    (void)snprintf(obj,sizeof(obj),ROOT_PATH "/user/_%u",s.uid);
+    return sd_bus_message_append(m,"(uo)",s.uid,obj);
+}
+static int prop_session_name(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    dl_session_properties s={0}; char buf[16384]; int r;
+    (void)b;(void)i;(void)n;(void)e;
+    if ((r=session_lookup(p,u,&s))<0) return r;
+    if ((r=user_name(s.uid,buf,sizeof(buf)))<0) return r;
+    return sd_bus_message_append(m,"s",buf);
+}
+static int prop_session_text(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    dl_session_properties s={0}; const char *v=""; int r;
+    (void)b;(void)i;(void)e;
+    if ((r=session_lookup(p,u,&s))<0) return r;
+    if (!strcmp(n,"TTY")) v=s.tty;
+    else if (!strcmp(n,"Display")) v=s.display;
+    else if (!strcmp(n,"Service")) v=s.service;
+    else if (!strcmp(n,"Desktop")) v=s.desktop;
+    else if (!strcmp(n,"Type")) v=s.type;
+    else if (!strcmp(n,"Class")) v=s.class_name;
+    if (!v) v="";
+    return sd_bus_message_append(m,"s",v);
+}
+static int prop_session_seat(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    dl_session_properties s={0}; char obj[256]="/"; int r;
+    (void)b;(void)i;(void)n;(void)e;
+    if ((r=session_lookup(p,u,&s))<0) return r;
+    if (s.seat_id && (r=make_path(SEAT_PATH,s.seat_id,obj,sizeof(obj)))<0) return r;
+    return sd_bus_message_append(m,"(so)",s.seat_id?s.seat_id:"",obj);
+}
+static int prop_session_bool(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    dl_session_properties s={0}; int r;
+    (void)b;(void)i;(void)e;
+    if ((r=session_lookup(p,u,&s))<0) return r;
+    return sd_bus_message_append(m,"b",!strcmp(n,"Remote") ? s.remote :
+        dl_manager_session_is_active(u,s.session_id));
+}
+static int prop_session_leader(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    dl_session_properties s={0}; int r;
+    (void)b;(void)i;(void)n;(void)e;
+    if ((r=session_lookup(p,u,&s))<0) return r;
+    return sd_bus_message_append(m,"u",s.leader_pid);
+}
+
+static int seat_lookup(const char *path, void *userdata, char *id, size_t cap)
+{
+    size_t i; const char *known = NULL; int r;
+    if ((r=path_id(path,SEAT_PATH,id,cap))<0) return r;
+    for (i=0;i<dl_manager_get_seat_count(userdata);i++)
+        if (dl_manager_get_seat_at(userdata,i,&known)==DL_OK && !strcmp(id,known)) return 0;
+    return -ENOENT;
+}
+static int prop_seat_id(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    char id[128]; int r; (void)b;(void)i;(void)n;(void)e;
+    if ((r=seat_lookup(p,u,id,sizeof(id)))<0) return r;
+    return sd_bus_message_append(m,"s",id);
+}
+static int prop_seat_active(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    char id[128],obj[256]="/"; const char *active=NULL; int r;
+    (void)b;(void)i;(void)n;(void)e;
+    if ((r=seat_lookup(p,u,id,sizeof(id)))<0) return r;
+    r=dl_manager_get_active_session(u,id,&active);
+    if (r==DL_OK && (r=make_path(SESSION_PATH,active,obj,sizeof(obj)))<0) return r;
+    return sd_bus_message_append(m,"(so)",r==DL_OK?active:"",obj);
+}
+static int prop_seat_capability(sd_bus *b,const char *p,const char *i,const char *n,
+    sd_bus_message *m,void *u,sd_bus_error *e)
+{
+    char id[128]; dl_seat_capabilities c={0}; int r;
+    (void)b;(void)i;(void)e;
+    if ((r=seat_lookup(p,u,id,sizeof(id)))<0) return r;
+    if ((r=dl_manager_get_seat_capabilities(u,id,&c))!=DL_OK) return -ENOENT;
+    return sd_bus_message_append(m,"b",!strcmp(n,"CanTTY")?c.has_tty:c.has_graphical);
+}
+
+static const sd_bus_vtable manager_vtable[] = {
+    SD_BUS_VTABLE_START(0),
+    SD_BUS_METHOD("ListSessions","","a(susso)",list_sessions,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("GetSession","s","o",get_session,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("GetSessionByPID","u","o",get_session_pid,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("ListSeats","","a(so)",list_seats,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("GetSeat","s","o",get_seat,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_VTABLE_END
+};
+static const sd_bus_vtable session_vtable[] = {
+    SD_BUS_VTABLE_START(0),
+    SD_BUS_PROPERTY("Id","s",prop_session_id,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("User","(uo)",prop_session_user,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Name","s",prop_session_name,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Seat","(so)",prop_session_seat,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("TTY","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Display","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Remote","b",prop_session_bool,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Service","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Desktop","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Leader","u",prop_session_leader,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Type","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Class","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Active","b",prop_session_bool,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_VTABLE_END
+};
+static const sd_bus_vtable seat_vtable[] = {
+    SD_BUS_VTABLE_START(0),
+    SD_BUS_PROPERTY("Id","s",prop_seat_id,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("ActiveSession","(so)",prop_seat_active,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("CanTTY","b",prop_seat_capability,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("CanGraphical","b",prop_seat_capability,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_VTABLE_END
+};
+
+int dl_login1_open(dl_login1 **out, dl_manager *manager)
+{
+    dl_login1 *s; int r;
+    if (!out || !manager) return -EINVAL;
+    *out=NULL;
+    s=calloc(1,sizeof(*s)); if (!s) return -ENOMEM;
+    r=sd_bus_open_system(&s->bus); if (r<0) goto fail;
+    r=sd_bus_add_object_vtable(s->bus,&s->manager_slot,ROOT_PATH,
+        BUS_NAME ".Manager",manager_vtable,manager); if (r<0) goto fail;
+    r=sd_bus_add_fallback_vtable(s->bus,&s->session_slot,SESSION_PATH,
+        BUS_NAME ".Session",session_vtable,NULL,manager); if (r<0) goto fail;
+    r=sd_bus_add_fallback_vtable(s->bus,&s->seat_slot,SEAT_PATH,
+        BUS_NAME ".Seat",seat_vtable,NULL,manager); if (r<0) goto fail;
+    r=sd_bus_request_name(s->bus,BUS_NAME,0); if (r<0) goto fail;
+    *out=s; return 0;
+fail:
+    dl_login1_close(s); return r;
+}
+int dl_login1_get_fd(const dl_login1 *s)
+{ return s && s->bus ? sd_bus_get_fd(s->bus) : -1; }
+short dl_login1_get_events(const dl_login1 *s)
+{ int r; if (!s||!s->bus) return 0; r=sd_bus_get_events(s->bus); return r<0?0:(short)r; }
+int dl_login1_dispatch(dl_login1 *s)
+{
+    int r; if (!s||!s->bus) return -EINVAL;
+    do { r=sd_bus_process(s->bus,NULL); } while (r>0);
+    return r<0?r:0;
+}
+void dl_login1_close(dl_login1 *s)
+{
+    if (!s) return;
+    s->seat_slot=sd_bus_slot_unref(s->seat_slot);
+    s->session_slot=sd_bus_slot_unref(s->session_slot);
+    s->manager_slot=sd_bus_slot_unref(s->manager_slot);
+    s->bus=sd_bus_flush_close_unref(s->bus);
+    free(s);
+}

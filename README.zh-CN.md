@@ -24,6 +24,10 @@ session required pam_dinit_logind.so socket=/run/dinit-logind/session.sock
 
 模块在 open_session 注册 Session，在 close_session 注销相同 Session ID；不执行认证，不替代其他 PAM 模块。Seat 不从 TTY 猜测。限制与调用流程见 `docs/pam-session-integration.zh-CN.md`。
 
+## login1 D-Bus 服务端
+
+当前提供 login1 Manager、Session、Seat 的只读查询与属性子集。接口范围见 [login1 D-Bus 文档](docs/login1-dbus.zh-CN.md)。构建需要 `libsystemd` 的 `sd-bus` 开发库，但不依赖 systemd PID 1 或 systemd-logind。
+
 ## Turnstile 集成
 
 Turnstile 的接口边界、可信 Session 数据契约与集成路线见 [Turnstile 集成设计](docs/turnstile-integration.zh-CN.md)。在上游属性查询和事件分发 API 可用前，不启用不完整的伪适配器。

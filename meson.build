@@ -1,6 +1,7 @@
 project('dinit-logind','c',version:'0.1.0',meson_version:'>= 0.60.0',
   default_options:['c_std=c11','warning_level=3','werror=true'])
 udev_dep=dependency('libudev')
+systemd_dep=dependency('libsystemd')
 cc=meson.get_compiler('c')
 pam_lib=cc.find_library('pam',required:false)
 pam_header=cc.has_header('security/pam_modules.h')
@@ -21,8 +22,12 @@ platform_lib=static_library('dinit-logind-linux-platform',
   dependencies:udev_dep,include_directories:include_directories('src'),install:false)
 platform_dep=declare_dependency(link_with:platform_lib,dependencies:[udev_dep,core_dep],
   include_directories:include_directories('src'))
+login1_lib=static_library('dinit-logind-login1',files('src/dbus/login1.c'),
+  dependencies:[systemd_dep,core_dep],include_directories:include_directories('src'),install:false)
+login1_dep=declare_dependency(link_with:login1_lib,
+  dependencies:[systemd_dep,core_dep],include_directories:include_directories('src'))
 daemon=executable('dinit-logind','src/daemon/main.c',
-  dependencies:[platform_dep,session_dep],install:true)
+  dependencies:[platform_dep,session_dep,login1_dep],install:true)
 if pam_lib.found() and pam_header
   shared_module('pam_dinit_logind','src/pam/pam_dinit_logind.c',
     dependencies:[pam_lib,pam_lifecycle_dep],include_directories:include_directories('src'),

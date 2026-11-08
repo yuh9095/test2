@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "core/manager.h"
+#include "dbus/login1.h"
 #include "platform/linux/udev-manager.h"
 #include "session/socket.h"
 
@@ -22,13 +23,14 @@ typedef struct dl_daemon_device_policy {
 static void print_usage(const char *program)
 {
     (void) printf(
-        "Usage: %s [--default-seat ID] [--session-socket PATH] [--help] [--version]\n"
+        "Usage: %s [--default-seat ID] [--session-socket PATH] [--no-login1] [--help] [--version]\n"
         "\n"
         "Run dinit-logind in the foreground.\n"
         "\n"
         "Options:\n"
         "  --default-seat ID    Assign otherwise-unlabelled seat devices to ID\n"
         "  --session-socket PATH  Listen for privileged PAM/Turnstile session requests\n"
+        "  --no-login1          Do not connect to system D-Bus or own login1\n"
         "  --help               Show this help and exit\n"
         "  --version            Show version and exit\n"
         "\n"
@@ -151,9 +153,10 @@ static int handle_signal_fd(int signal_fd, bool *running)
 static int run_event_loop(
     dl_udev_seat_monitor *monitor,
     int signal_fd,
-    dl_session_socket *session_socket)
+    dl_session_socket *session_socket,
+    dl_login1 *login1)
 {
-    struct pollfd descriptors[3];
+    struct pollfd descriptors[4];
     bool running = true;
 
     descriptors[0].fd = dl_udev_seat_monitor_get_fd(monitor);
@@ -166,11 +169,24 @@ static int run_event_loop(
     if (descriptors[0].fd < 0) {
         return -1;
     }
+    {
+        nfds_t count = session_socket == NULL ? 2U : 3U;
+        if (login1 != NULL) {
+            descriptors[count].fd = dl_login1_get_fd(login1);
+            descriptors[count].events = dl_login1_get_events(login1);
+            if (descriptors[count].fd < 0) { errno = EIO; return -1; }
+        }
+        if (login1 != NULL && dl_login1_dispatch(login1) < 0) return -1;
+    }
 
     while (running) {
         int result;
         nfds_t descriptor_count = session_socket == NULL ? 2U : 3U;
         nfds_t index;
+        if (login1 != NULL) {
+            descriptors[descriptor_count].events = dl_login1_get_events(login1);
+            descriptor_count++;
+        }
 
         for (index = 0U; index < descriptor_count; index++) {
             descriptors[index].revents = 0;
@@ -220,6 +236,11 @@ static int run_event_loop(
                 return -1;
             }
         }
+        if (login1 != NULL) {
+            nfds_t bus_index = descriptor_count - 1U;
+            if ((descriptors[bus_index].revents & descriptors[bus_index].events) != 0 &&
+                dl_login1_dispatch(login1) < 0) return -1;
+        }
     }
 
     return 0;
@@ -230,8 +251,10 @@ int main(int argc, char **argv)
     dl_manager *manager = NULL;
     dl_udev_seat_monitor *monitor = NULL;
     dl_session_socket *session_socket = NULL;
+    dl_login1 *login1 = NULL;
     dl_daemon_device_policy device_policy = { NULL };
     const char *session_socket_path = NULL;
+    bool no_login1 = false;
     int signal_fd = -1;
     int exit_status = EXIT_FAILURE;
     int index;
@@ -240,6 +263,10 @@ int main(int argc, char **argv)
         if (strcmp(argv[index], "--help") == 0) {
             print_usage(argv[0]);
             return EXIT_SUCCESS;
+        }
+        if (strcmp(argv[index], "--no-login1") == 0) {
+            no_login1 = true;
+            continue;
         }
         if (strcmp(argv[index], "--version") == 0) {
             (void) printf("dinit-logind %s\n", DL_VERSION);
@@ -282,6 +309,16 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
+    if (!no_login1) {
+        if (dl_login1_open(&login1, manager) < 0) {
+            (void) fprintf(stderr,
+                "dinit-logind: cannot connect to system D-Bus or own org.freedesktop.login1\\n");
+            goto cleanup;
+        }
+        (void) fprintf(stderr,
+            "dinit-logind: acquired org.freedesktop.login1 on system D-Bus\\n");
+    }
+
     if (session_socket_path != NULL) {
         if (dl_session_socket_open(
                 &session_socket, manager, session_socket_path, (uid_t) 0) != 0) {
@@ -317,7 +354,7 @@ int main(int argc, char **argv)
             "dinit-logind: started; only explicitly labelled Seat devices are managed\n");
     }
 
-    if (run_event_loop(monitor, signal_fd, session_socket) != 0) {
+    if (run_event_loop(monitor, signal_fd, session_socket, login1) != 0) {
         (void) fprintf(stderr, "dinit-logind: event loop failed: %s\n",
             strerror(errno));
         goto cleanup;
@@ -327,6 +364,7 @@ int main(int argc, char **argv)
     (void) fprintf(stderr, "dinit-logind: stopping\n");
 
 cleanup:
+    dl_login1_close(login1);
     dl_session_socket_close(session_socket);
     dl_udev_seat_monitor_close(monitor);
     dl_manager_destroy(manager);

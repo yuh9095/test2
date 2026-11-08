@@ -26,6 +26,14 @@ contribute TTY/VT capability flags; DRM subsystem devices contribute the
 graphical capability flag. This is a conservative first policy and does not
 yet provide complete logind device authorization or VT session switching.
 
+## login1 D-Bus integration
+
+The daemon uses the `sd-bus` API from `libsystemd` as a D-Bus transport
+library. It does not depend on systemd PID 1 or systemd-logind. The exported
+Manager, Session and Seat read-only subset is documented in
+[login1-dbus.zh-CN.md](login1-dbus.zh-CN.md). Use `--no-login1` only for
+isolated core/adapter testing without a system bus.
+
 ## Current limitations
 
 This executable is a real process entry point and eudev event-loop host, but

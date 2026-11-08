@@ -25,7 +25,7 @@ Session：
   校验调用者 UID，强制接管仅允许 root。
 - `TakeDevice(major,minor)`：由核心设备管理层打开并验证字符设备，返回 D-Bus Unix FD
   和 inactive 标志。
-- `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。
+- `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。控制者 D-Bus unique name 消失时，NameOwnerChanged 监听器会自动释放该连接持有的所有设备 claim 与管理 FD。
 
 Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑
 活动 Session；`SwitchTo(vtnr)`、`SwitchToNext()`、`SwitchToPrevious()` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，
@@ -44,9 +44,9 @@ User 对象路径。
   最后写入 `cgroup.kill`。路径元数据本身不被当作成员身份凭据。
 - **Terminate**：尚未实现 SIGTERM、异步宽限期、超时后 SIGKILL 的完整状态机；
   因此 `Terminate()` 与 `TerminateSession()` 保持 NotSupported。
-- **设备暂停通知**：核心有 pause state 与超时原语，但尚未把 seatd/libseat 的
-  pause/resume 回调映射为 login1 的 PauseDevice/ResumeDevice 信号，也未完成
-  D-Bus FD 生命周期与控制器断连清理。
+- **设备暂停通知**：核心有 pause state 与超时原语；D-Bus 控制器断连清理已实现，
+  会释放该连接拥有的所有 claim 和管理 FD。但 seatd/libseat 的 pause/resume 回调
+  尚未映射为 login1 的 PauseDevice/ResumeDevice 信号，客户端 FD 的恢复通知也未完成。
 - **VT**：支持 seat0 的 `SwitchTo(vtnr)`、`SwitchToNext()` 和 `SwitchToPrevious()`；
   后两者依据已登记且具有 VTNr 的 Session 选择下一个/上一个 VT，并循环查找。
   容器没有可用 VT 时返回 NotSupported。Seat.Terminate 仍未实现。

@@ -179,7 +179,7 @@ jobs:
               ;;
             alpine)
               apk add --no-cache build-base gcc clang meson ninja pkgconf \
-                eudev-dev elogind-dev dbus linux-pam-dev git
+                eudev-dev elogind-dev dbus linux-pam-dev linux-headers git
               ;;
             suse)
               zypper --non-interactive refresh

@@ -11,18 +11,47 @@ concurrency:
   group: musl-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  musl:
+  musl-x86:
     name: musl / ${{ matrix.arch }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86_64, aarch64, i386, armv7]
+        include:
+          - arch: x86-64
+            platform: linux/amd64
+          - arch: x86
+            platform: linux/386
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable QEMU for 32-bit x86
+        if: matrix.platform == 'linux/386'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: 386
+      - name: Build and test with musl
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "${{ github.workspace }}:/src" -w /src alpine:edge sh -ec '
+              apk add --no-cache build-base meson ninja eudev-dev elogind-dev linux-headers
+              meson setup build
+              meson compile -C build
+              meson test -C build --print-errorlogs
+            '
+
+  musl-arm:
+    name: musl / ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, armv7]
     steps:
       - uses: actions/checkout@v4
       - name: Build and test on Alpine Linux (musl)
-        uses: uraimo/run-on-arch-action@v2
+        uses: uraimo/run-on-arch-action@v3
         with:
           arch: ${{ matrix.arch }}
           distro: alpine_latest

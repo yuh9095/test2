@@ -29,6 +29,8 @@ static void test_device_fd_and_controller_lifecycle(void)
     assert(caps.has_tty && caps.has_graphical && caps.has_vt);
 
     assert(dl_manager_take_control(manager, "s1", ":1.42", 1000U, false) == DL_OK);
+    assert(dl_manager_session_is_controller(manager, "s1", ":1.42") == DL_OK);
+    assert(dl_manager_session_is_controller(manager, "s1", ":1.43") == DL_ERROR_INVALID_STATE);
     assert(dl_manager_take_control(manager, "s1", ":1.43", 1000U, false) ==
         DL_ERROR_BUSY);
     assert(dl_manager_take_device_fd(

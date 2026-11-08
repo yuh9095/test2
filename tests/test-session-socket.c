@@ -77,7 +77,10 @@ int main(void)
     send_request(server, client_fd, &request, &response);
     assert(response.status == DL_OK);
     assert(dl_manager_get_session_count(manager) == 1U);
+    (void) close(client_fd);
 
+    /* The server intentionally handles one request per connection. */
+    client_fd = connect_socket(path);
     memset(&request, 0, sizeof(request));
     request.magic = DL_SESSION_REGISTRATION_MAGIC;
     request.version = DL_SESSION_REGISTRATION_VERSION;

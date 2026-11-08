@@ -20,6 +20,7 @@ typedef struct dl_seat {
 typedef struct dl_claim {
     uint32_t major_number;
     uint32_t minor_number;
+    dl_device_pause_state pause_state;
     struct dl_claim *next;
 } dl_claim;
 
@@ -520,6 +521,7 @@ dl_error dl_manager_claim_device(
     }
     claim->major_number = major_number;
     claim->minor_number = minor_number;
+    claim->pause_state = DL_DEVICE_ACTIVE;
     claim->next = session->claims;
     session->claims = claim;
 
@@ -557,6 +559,132 @@ dl_error dl_manager_release_device(
         cursor = &claim->next;
     }
     return DL_ERROR_NOT_FOUND;
+}
+
+ 
+static dl_claim *find_claim(
+    dl_session *session,
+    uint32_t major_number,
+    uint32_t minor_number)
+{
+    dl_claim *claim;
+
+    for (claim = session->claims; claim != NULL; claim = claim->next) {
+        if (claim->major_number == major_number &&
+            claim->minor_number == minor_number) {
+            return claim;
+        }
+    }
+    return NULL;
+}
+
+dl_error dl_manager_pause_device(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    bool force)
+{
+    dl_session *session;
+    dl_claim *claim;
+
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0') {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    claim = find_claim(session, major_number, minor_number);
+    if (claim == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (claim->pause_state != DL_DEVICE_ACTIVE &&
+        !(force && claim->pause_state == DL_DEVICE_PAUSE_PENDING)) {
+        return DL_ERROR_INVALID_STATE;
+    }
+
+    claim->pause_state = force ? DL_DEVICE_PAUSED : DL_DEVICE_PAUSE_PENDING;
+    return DL_OK;
+}
+
+dl_error dl_manager_complete_device_pause(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number)
+{
+    dl_session *session;
+    dl_claim *claim;
+
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0') {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    claim = find_claim(session, major_number, minor_number);
+    if (claim == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (claim->pause_state != DL_DEVICE_PAUSE_PENDING) {
+        return DL_ERROR_INVALID_STATE;
+    }
+
+    claim->pause_state = DL_DEVICE_PAUSED;
+    return DL_OK;
+}
+
+dl_error dl_manager_resume_device(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number)
+{
+    dl_session *session;
+    dl_claim *claim;
+
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0') {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    claim = find_claim(session, major_number, minor_number);
+    if (claim == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (!dl_manager_session_is_active(manager, session_id)) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    if (claim->pause_state != DL_DEVICE_PAUSED) {
+        return DL_ERROR_INVALID_STATE;
+    }
+
+    claim->pause_state = DL_DEVICE_ACTIVE;
+    return DL_OK;
+}
+
+dl_device_pause_state dl_manager_get_device_pause_state(
+    const dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number)
+{
+    dl_session *session;
+    dl_claim *claim;
+
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0') {
+        return DL_DEVICE_PAUSED;
+    }
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_DEVICE_PAUSED;
+    }
+    claim = find_claim(session, major_number, minor_number);
+    return claim == NULL ? DL_DEVICE_PAUSED : claim->pause_state;
 }
 
 uint64_t dl_manager_device_generation(

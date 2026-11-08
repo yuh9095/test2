@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   distro-build-test:
-    name: ${{ matrix.distro }} / ${{ matrix.arch }} / ${{ matrix.compiler }}
+    name: ${{ matrix.distro }} / ${{ matrix.arch }} / ${{ matrix.compiler }} / ${{ matrix.profile }}
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
@@ -164,12 +164,28 @@ jobs:
             image: chimeralinux/chimera:latest
             family: chimera
             compiler: clang
+            profile: debug
+          - distro: "Chimera Linux"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: chimeralinux/chimera:latest
+            family: chimera
+            compiler: clang
+            profile: release-lto
           - distro: "Chimera Linux"
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: chimeralinux/chimera:latest
             family: chimera
             compiler: clang
+            profile: debug
+          - distro: "Chimera Linux"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: chimeralinux/chimera:latest
+            family: chimera
+            compiler: clang
+            profile: release-lto
 
 
     env:
@@ -254,8 +270,13 @@ jobs:
             pkg-config --modversion libudev
           fi
 
-      - name: Configure
-        run: meson setup build --buildtype=debug
+      - name: Configure debug or optimized LTO profile
+        run: |
+          if [ "${{ matrix.profile }}" = release-lto ]; then
+            meson setup build --buildtype=release -Db_lto=true
+          else
+            meson setup build --buildtype=debug -Db_lto=false
+          fi
 
       - name: Compile with strict warnings
         run: meson compile -C build

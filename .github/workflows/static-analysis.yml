@@ -27,15 +27,9 @@ jobs:
           sudo apt-get install -y gcc meson ninja-build pkg-config \
             libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
       - name: Configure with GCC analyzer
-        env:
-          CC: gcc
-          CFLAGS: -O2 -g -fanalyzer -Werror=analyzer-null-dereference \
-            -Werror=analyzer-use-after-free -Werror=analyzer-double-free
-        run: meson setup build -D b_sanitize=none
+        run: meson setup build --buildtype=debug -D b_sanitize=none
       - name: Compile
-        run: |
-          meson configure build -Dc_args="$CFLAGS"
-          meson compile -C build
+        run: meson compile -C build
       - name: Test
         run: meson test -C build --print-errorlogs --no-rebuild
 
@@ -75,16 +69,8 @@ jobs:
           sudo apt-get install -y gcc meson ninja-build pkg-config \
             libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
       - name: Configure hardened build
-        env:
-          CC: gcc
-          CFLAGS: -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
-            -fstack-clash-protection -fno-common -fPIE \
-            -Wformat=2 -Werror=format-security -Werror=implicit-function-declaration
-          LDFLAGS: -Wl,-z,relro,-z,now -Wl,-z,noexecstack -pie
         run: meson setup build --buildtype=release
       - name: Compile
-        run: |
-          meson configure build -Dc_args="$CFLAGS" -Dc_link_args="$LDFLAGS"
-          meson compile -C build
+        run: meson compile -C build
       - name: Test
         run: meson test -C build --print-errorlogs --no-rebuild

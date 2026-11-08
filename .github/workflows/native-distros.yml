@@ -179,13 +179,12 @@ jobs:
               ;;
             alpine)
               apk add --no-cache build-base gcc clang meson ninja pkgconf \
-                eudev-dev elogind-dev dbus linux-pam-dev
+                eudev-dev elogind-dev dbus linux-pam-dev git
               ;;
             suse)
               zypper --non-interactive refresh
               zypper --non-interactive install --no-recommends \
-                gcc clang meson ninja pkg-config libudev-devel \
-                libsystemd-devel pam-devel dbus-1-daemon
+                gcc clang meson ninja pkgconf systemd-devel pam-devel dbus-1
               ;;
             arch)
               pacman -Syu --noconfirm --needed base-devel gcc clang meson ninja \
@@ -198,6 +197,17 @@ jobs:
           esac
 
       - uses: actions/checkout@v4
+        if: matrix.family != 'alpine' || matrix.arch != 'aarch64'
+
+      - name: Checkout source in Alpine ARM64 container
+        if: matrix.family == 'alpine' && matrix.arch == 'aarch64'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git clone --filter=blob:none \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
+          git checkout --detach "${GITHUB_SHA}"
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
 
       - name: Record native execution environment
         run: |

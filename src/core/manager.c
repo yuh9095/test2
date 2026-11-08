@@ -100,6 +100,21 @@ static dl_device *find_device(
     return NULL;
 }
 
+static bool device_exists_anywhere(
+    const dl_manager *manager,
+    uint32_t major_number,
+    uint32_t minor_number)
+{
+    const dl_seat *seat;
+
+    for (seat = manager->seats; seat != NULL; seat = seat->next) {
+        if (find_device(seat, major_number, minor_number) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool session_has_claim(
     const dl_session *session,
     uint32_t major_number,
@@ -282,7 +297,7 @@ dl_error dl_manager_add_device(
     if (seat == NULL) {
         return DL_ERROR_NOT_FOUND;
     }
-    if (find_device(seat, major_number, minor_number) != NULL) {
+    if (device_exists_anywhere(manager, major_number, minor_number)) {
         return DL_ERROR_ALREADY_EXISTS;
     }
     if (manager->next_generation == 0U) {

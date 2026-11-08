@@ -28,7 +28,10 @@ core_dep = declare_dependency(
 
 session_registration_lib = static_library(
   'dinit-logind-session-registration',
-  'src/session/registration.c',
+  files(
+    'src/session/registration.c',
+    'src/session/socket.c',
+  ),
   dependencies: core_dep,
   include_directories: include_directories('src'),
   install: false,
@@ -61,7 +64,7 @@ linux_platform_dep = declare_dependency(
 daemon_exe = executable(
   'dinit-logind',
   'src/daemon/main.c',
-  dependencies: linux_platform_dep,
+  dependencies: [linux_platform_dep, session_registration_dep],
   install: true,
 )
 
@@ -94,6 +97,14 @@ registration_test_exe = executable(
 )
 
 test('session-registration', registration_test_exe, timeout: 30)
+
+session_socket_test_exe = executable(
+  'test-session-socket',
+  'tests/test-session-socket.c',
+  dependencies: session_registration_dep,
+)
+
+test('session-socket', session_socket_test_exe, timeout: 30)
 
 platform_test_exe = executable(
   'test-linux-platform',

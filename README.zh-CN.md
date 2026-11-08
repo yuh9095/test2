@@ -4,7 +4,7 @@
 
 [English](README.md) | 简体中文
 
-> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev/eudev 设备集成，以及可由 Dinit 监督的前台守护进程。login1 D-Bus、实际 Turnstile/PAM 注册传输、libseat FD 交接和完整 elogind API 兼容仍未完成。
+> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev/eudev 设备集成，以及可由 Dinit 监督的前台守护进程。login1 D-Bus、完整 PAM 模块和 Turnstile hook、libseat FD 交接和完整 elogind API 兼容仍未完成。
 
 ## 构建与测试
 
@@ -50,11 +50,13 @@ Linux 平台层通过 libudev 枚举设备并监听 eudev 热插拔事件。Seat
 
 核心 Session 查询接口提供按 leader PID 查找、Session 数量和按索引读取，供后续 login1 的 `GetSessionByPID` 与 `ListSessions` 等 D-Bus 方法复用。按 PID 查询目前只匹配 leader，不扫描进程树。
 
-新增的内部 Session 注册协议位于 `src/session/registration.c`。它定义固定长度、带版本号的 OPEN/CLOSE 消息，校验 Session ID、字段终止符、标志位和消息长度，并要求调用者先以可信 peer UID 通过授权检查。协议预期运行在 Unix `SOCK_SEQPACKET` 上，由特权 PAM/Turnstile 入口使用；生产传输层必须通过 `SO_PEERCRED` 获取真实对端 UID，并将允许的 UID 固定为 root。当前提交实现的是协议校验和核心状态操作，尚未实现 Socket 监听器、PAM 模块或 Turnstile hook。详细边界见 `docs/session-registration.zh-CN.md`。
+## Session 注册通道
+
+`src/session/registration.c` 定义固定长度、带版本号的 OPEN/CLOSE 消息，并严格校验消息长度、Session ID、字段终止符、标志位和保留字段。`src/session/socket.c` 提供 Linux Unix `SOCK_SEQPACKET` 监听器，通过 `SO_PEERCRED` 读取真实 peer UID，Socket 权限设为 0600，默认只接受 root 对端。守护进程可用 `--session-socket /run/dinit-logind/session.sock` 显式启用；父目录必须由系统服务预先创建并保护。
+
+此通道是为特权 PAM/Turnstile 入口准备的，不是供普通桌面客户端使用。OPEN 的 UID、leader PID、Seat 和会话属性只有在 peer UID 已通过授权后才会进入核心；SSH 和无头会话可不带 Seat。当前尚未提供 PAM 模块、Turnstile hook 或异常退出后的持久化恢复机制。详细协议见 `docs/session-registration.zh-CN.md`。
 
 ## 计划中的内部模块
-
-以下是逻辑边界，不代表必须拆分成多个守护进程：
 
 - 用户与会话生命周期管理
 - Seat 与设备管理

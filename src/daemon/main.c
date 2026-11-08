@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "core/manager.h"
 #include "platform/linux/udev-manager.h"
+#include "session/socket.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -21,16 +22,18 @@ typedef struct dl_daemon_device_policy {
 static void print_usage(const char *program)
 {
     (void) printf(
-        "Usage: %s [--default-seat ID] [--help] [--version]\n"
+        "Usage: %s [--default-seat ID] [--session-socket PATH] [--help] [--version]\n"
         "\n"
         "Run dinit-logind in the foreground.\n"
         "\n"
         "Options:\n"
-        "  --default-seat ID  Assign otherwise-unlabelled seat devices to ID\n"
-        "  --help             Show this help and exit\n"
-        "  --version          Show version and exit\n"
+        "  --default-seat ID    Assign otherwise-unlabelled seat devices to ID\n"
+        "  --session-socket PATH  Listen for privileged PAM/Turnstile session requests\n"
+        "  --help               Show this help and exit\n"
+        "  --version            Show version and exit\n"
         "\n"
-        "Without --default-seat, devices lacking ID_SEAT remain unmanaged.\n",
+        "Without --default-seat, devices lacking ID_SEAT remain unmanaged.\n"
+        "The session socket accepts only root peer credentials.\n",
         program);
 }
 
@@ -145,15 +148,20 @@ static int handle_signal_fd(int signal_fd, bool *running)
     }
 }
 
-static int run_event_loop(dl_udev_seat_monitor *monitor, int signal_fd)
+static int run_event_loop(
+    dl_udev_seat_monitor *monitor,
+    int signal_fd,
+    dl_session_socket *session_socket)
 {
-    struct pollfd descriptors[2];
+    struct pollfd descriptors[3];
     bool running = true;
 
     descriptors[0].fd = dl_udev_seat_monitor_get_fd(monitor);
     descriptors[0].events = POLLIN;
     descriptors[1].fd = signal_fd;
     descriptors[1].events = POLLIN;
+    descriptors[2].fd = dl_session_socket_get_fd(session_socket);
+    descriptors[2].events = POLLIN;
 
     if (descriptors[0].fd < 0) {
         return -1;
@@ -161,10 +169,13 @@ static int run_event_loop(dl_udev_seat_monitor *monitor, int signal_fd)
 
     while (running) {
         int result;
+        nfds_t descriptor_count = session_socket == NULL ? 2U : 3U;
+        nfds_t index;
 
-        descriptors[0].revents = 0;
-        descriptors[1].revents = 0;
-        result = poll(descriptors, 2U, -1);
+        for (index = 0U; index < descriptor_count; index++) {
+            descriptors[index].revents = 0;
+        }
+        result = poll(descriptors, descriptor_count, -1);
         if (result < 0) {
             if (errno == EINTR) {
                 continue;
@@ -172,24 +183,22 @@ static int run_event_loop(dl_udev_seat_monitor *monitor, int signal_fd)
             return -1;
         }
 
-        if ((descriptors[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-            errno = EIO;
-            return -1;
+        for (index = 0U; index < descriptor_count; index++) {
+            if ((descriptors[index].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                errno = EIO;
+                return -1;
+            }
         }
+
         if ((descriptors[1].revents & POLLIN) != 0) {
             if (handle_signal_fd(signal_fd, &running) != 0) {
                 return -1;
             }
         }
-
         if (!running) {
             break;
         }
 
-        if ((descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-            errno = EIO;
-            return -1;
-        }
         if ((descriptors[0].revents & POLLIN) != 0) {
             unsigned int dispatched = 0U;
 
@@ -204,6 +213,13 @@ static int run_event_loop(dl_udev_seat_monitor *monitor, int signal_fd)
                 dispatched++;
             }
         }
+
+        if (session_socket != NULL &&
+            (descriptors[2].revents & POLLIN) != 0) {
+            if (dl_session_socket_dispatch(session_socket) < 0) {
+                return -1;
+            }
+        }
     }
 
     return 0;
@@ -213,7 +229,9 @@ int main(int argc, char **argv)
 {
     dl_manager *manager = NULL;
     dl_udev_seat_monitor *monitor = NULL;
+    dl_session_socket *session_socket = NULL;
     dl_daemon_device_policy device_policy = { NULL };
+    const char *session_socket_path = NULL;
     int signal_fd = -1;
     int exit_status = EXIT_FAILURE;
     int index;
@@ -237,6 +255,15 @@ int main(int argc, char **argv)
             device_policy.default_seat = argv[++index];
             continue;
         }
+        if (strcmp(argv[index], "--session-socket") == 0) {
+            if (index + 1 >= argc || argv[index + 1][0] != '/') {
+                (void) fprintf(stderr,
+                    "dinit-logind: --session-socket requires an absolute path\n");
+                return EXIT_FAILURE;
+            }
+            session_socket_path = argv[++index];
+            continue;
+        }
         print_usage(argv[0]);
         (void) fprintf(stderr, "dinit-logind: unknown option: %s\n",
             argv[index]);
@@ -253,6 +280,19 @@ int main(int argc, char **argv)
     if (dl_manager_create(&manager) != DL_OK) {
         (void) fprintf(stderr, "dinit-logind: cannot create core manager\n");
         goto cleanup;
+    }
+
+    if (session_socket_path != NULL) {
+        if (dl_session_socket_open(
+                &session_socket, manager, session_socket_path, (uid_t) 0) != 0) {
+            (void) fprintf(stderr,
+                "dinit-logind: cannot open session socket %s: %s\n",
+                session_socket_path, strerror(errno));
+            goto cleanup;
+        }
+        (void) fprintf(stderr,
+            "dinit-logind: privileged session registration socket: %s\n",
+            session_socket_path);
     }
 
     if (dl_udev_seat_monitor_open(
@@ -277,7 +317,7 @@ int main(int argc, char **argv)
             "dinit-logind: started; only explicitly labelled Seat devices are managed\n");
     }
 
-    if (run_event_loop(monitor, signal_fd) != 0) {
+    if (run_event_loop(monitor, signal_fd, session_socket) != 0) {
         (void) fprintf(stderr, "dinit-logind: event loop failed: %s\n",
             strerror(errno));
         goto cleanup;
@@ -287,6 +327,7 @@ int main(int argc, char **argv)
     (void) fprintf(stderr, "dinit-logind: stopping\n");
 
 cleanup:
+    dl_session_socket_close(session_socket);
     dl_udev_seat_monitor_close(monitor);
     dl_manager_destroy(manager);
     if (signal_fd >= 0) {

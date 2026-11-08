@@ -23,7 +23,7 @@ Session：
   和 inactive 标志。
 - `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。
 
-Seat：Id、ActiveSession、CanTTY、CanGraphical。
+Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑活动 Session，并发送 Seat/Session 属性变化通知。物理 VT 切换仍由独立 VT adapter 后续接入。
 User：新增最小对象，导出 UID、Name。
 
 对象路径中的非字母数字字符采用十六进制转义。Session 的 User 属性现在指向已导出的
@@ -53,7 +53,7 @@ User 对象路径。
 login1 服务端和独立客户端，不占用宿主机的系统总线，也不需要运行
 systemd 或 systemd-logind。
 
-该测试覆盖 Manager.GetSession/ListSessions、GetUser/GetUserByPID/ListUsers、Session.Activate、
+该测试覆盖 Manager.GetSession/ListSessions、GetUser/GetUserByPID/ListUsers、Session.Activate、Seat.ActivateSession、
 Lock/Unlock、TakeControl/ReleaseControl 的真实 D-Bus 调用路径。
 生产入口 `dl_login1_open()` 仍连接系统总线；测试专用入口
 `dl_login1_open_address()` 只接受显式 D-Bus 地址。

@@ -96,6 +96,8 @@ int main(void)
 
     call_ok(client,object_path,"org.freedesktop.login1.Session","Activate","");
     assert(dl_manager_session_is_active(manager,"test-session"));
+    call_ok(client,"/org/freedesktop/login1/seat/seat0",
+        "org.freedesktop.login1.Seat","ActivateSession","s","test-session");
     call_ok(client,object_path,"org.freedesktop.login1.Session","Lock","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","Unlock","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","TakeControl","b",0);

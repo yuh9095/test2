@@ -677,14 +677,14 @@ dl_device_pause_state dl_manager_get_device_pause_state(
     dl_claim *claim;
 
     if (manager == NULL || session_id == NULL || session_id[0] == '\0') {
-        return DL_DEVICE_PAUSED;
+        return DL_DEVICE_UNCLAIMED;
     }
     session = find_session(manager, session_id);
     if (session == NULL) {
-        return DL_DEVICE_PAUSED;
+        return DL_DEVICE_UNCLAIMED;
     }
     claim = find_claim(session, major_number, minor_number);
-    return claim == NULL ? DL_DEVICE_PAUSED : claim->pause_state;
+    return claim == NULL ? DL_DEVICE_UNCLAIMED : claim->pause_state;
 }
 
 uint64_t dl_manager_device_generation(

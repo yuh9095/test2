@@ -1,0 +1,41 @@
+name: ARMv7 Build and Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: armv7-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  armv7:
+    name: ARMv7 / Debian 12 / GCC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test on 32-bit ARM under QEMU
+        uses: uraimo/run-on-arch-action@v3
+        with:
+          arch: armv7
+          distro: bookworm
+          run: |
+            set -eu
+            test "$(getconf LONG_BIT)" = 32
+            case "$(uname -m)" in
+              armv7*|armv8l) ;;
+              *) echo "Unexpected ARM architecture: $(uname -m)" >&2; exit 1 ;;
+            esac
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              build-essential gcc meson ninja-build pkg-config \
+              libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+            gcc --version
+            meson --version
+            meson setup build --buildtype=debug
+            meson compile -C build
+            meson test -C build --print-errorlogs --no-rebuild

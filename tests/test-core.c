@@ -272,6 +272,33 @@ static void test_argument_validation(void)
     dl_manager_destroy(manager);
 }
 
+
+static void test_pidfd_identity_snapshot(void)
+{
+    dl_manager *manager = NULL;
+    dl_session_properties properties = {0};
+    int pidfd = -1;
+    dl_error result;
+
+    properties.leader_pid = (uint32_t)getpid();
+    assert(dl_manager_create(&manager) == DL_OK);
+    assert(dl_manager_add_session_with_properties(manager, "pidfd-test",
+        (uint32_t)getuid(), &properties) == DL_OK);
+
+    result = dl_manager_dup_session_pidfd(manager, "pidfd-test", &pidfd);
+    if (result == DL_OK) {
+        assert(pidfd >= 0);
+        assert(close(pidfd) == 0);
+    } else {
+        /* Older kernels may not implement pidfd_open; no unsafe PID fallback. */
+        assert(result == DL_ERROR_INVALID_STATE);
+        assert(pidfd == -1);
+    }
+
+    assert(dl_manager_remove_session(manager, "pidfd-test") == DL_OK);
+    dl_manager_destroy(manager);
+}
+
 int main(void)
 {
     test_device_fd_and_controller_lifecycle();
@@ -280,6 +307,7 @@ int main(void)
     test_unseated_remote_session_metadata();
     test_seat_query_api();
     test_argument_validation();
+    test_pidfd_identity_snapshot();
     puts("core model tests passed");
     return 0;
 }

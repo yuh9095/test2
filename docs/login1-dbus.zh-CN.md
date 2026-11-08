@@ -39,7 +39,7 @@ User 对象路径。
 - **D-Bus 运行时测试**：已增加私有总线端到端测试，覆盖当前列出的 Manager/Session 方法；
   已覆盖 `CGroup` 属性和当前列出的 Manager/Session 方法；尚未覆盖设备 FD、Pause/Resume 信号、VT 切换和完整桌面客户端行为。
 - `GetSessionByPID` 仍只匹配已登记 Leader PID；PID reuse / pidfd 保护及全 Session
-  进程映射仍待实现。
+  进程映射仍待实现。核心现在会在 Session 注册时尝试捕获 Leader 的 pidfd，并提供仅供内部使用的安全复制接口；内核不支持 pidfd 或 Leader 已退出时，不会退回到不受保护的 PID 信号操作。
 
 默认启动需要系统总线运行，且不能有其他服务占用 `org.freedesktop.login1`。
 `--no-login1` 可用于不启动 D-Bus 的核心/设备适配器调试。

@@ -32,7 +32,7 @@ session required pam_dinit_logind.so socket=/run/dinit-logind/session.sock
 
 特权 Unix `SOCK_SEQPACKET` 注册协议已升级到版本 2，可选携带相对于统一 cgroup 挂载点的 Session cgroup 路径。服务端拒绝绝对路径、空路径组件、`.`、`..` 和控制字符，并在核心模型中保存该元数据；login1 Session 的 `CGroup` 属性会以标准绝对路径形式公开它。
 
-协议仍接受旧版 v1 消息（包括旧长度的 socket 数据包），未提供 cgroup 信息的旧客户端可以继续注册 Session。当前这只是经过语法校验的归属元数据，**不代表已完成进程成员身份验证或 Session 终止**。在实现 `Terminate()` / `Kill()` 前，执行路径还必须通过 cgroup 文件描述符安全遍历、核对 Leader 确实属于目标 cgroup，并防止 PID 重用；没有这些检查时必须明确返回 NotSupported。
+协议仍接受旧版 v1 消息（包括旧长度的 socket 数据包），未提供 cgroup 信息的旧客户端可以继续注册 Session。核心还会在注册时尝试捕获 Leader 的 pidfd，保存稳定的进程身份引用；内核不支持 pidfd 或进程已退出时，安全复制接口会明确失败，不回退到裸 PID。当前 cgroup 路径仍只是经过语法校验的归属元数据，**不代表已完成进程成员身份验证或 Session 终止**。在实现 `Terminate()` / `Kill()` 前，执行路径还必须通过 cgroup 文件描述符安全遍历、核对 Leader 确实属于目标 cgroup，并防止 PID 重用；没有这些检查时必须明确返回 NotSupported。
 
 ## Turnstile 集成
 

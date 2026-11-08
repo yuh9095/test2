@@ -1,8 +1,10 @@
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 #include "core/manager.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/syscall.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -41,6 +43,7 @@ typedef struct dl_session {
     char *seat_id;
     uint32_t uid;
     uint32_t leader_pid;
+    int leader_pidfd;
     bool remote;
     char *type;
     char *class_name;
@@ -131,6 +134,17 @@ static bool valid_cgroup_path(const char *path)
         }
     }
     return true;
+}
+
+static int open_pidfd(uint32_t pid)
+{
+#if defined(SYS_pidfd_open)
+    return (int) syscall(SYS_pidfd_open, (pid_t) pid, 0U);
+#else
+    (void) pid;
+    errno = ENOSYS;
+    return -1;
+#endif
 }
 
 static dl_session *find_session_by_leader_pid(
@@ -309,6 +323,7 @@ void dl_manager_destroy(dl_manager *manager)
         free(session->tty);
         free(session->display);
         free(session->cgroup_path);
+        if (session->leader_pidfd >= 0) (void) close(session->leader_pidfd);
         free(session->controller_id);
         free(session);
         session = next;
@@ -541,6 +556,7 @@ dl_error dl_manager_add_session_with_properties(
     if (session == NULL) {
         return DL_ERROR_NO_MEMORY;
     }
+    session->leader_pidfd = -1;
     session->id = copy_string(session_id);
     session->seat_id = copy_optional_string(seat_id);
     session->type = copy_optional_string(properties->type);
@@ -574,6 +590,9 @@ dl_error dl_manager_add_session_with_properties(
 
     session->uid = uid;
     session->leader_pid = properties->leader_pid;
+    if (session->leader_pid != 0U) {
+        session->leader_pidfd = open_pidfd(session->leader_pid);
+    }
     session->remote = properties->remote;
     session->next = manager->sessions;
     manager->sessions = session;
@@ -623,6 +642,42 @@ dl_error dl_manager_get_session_properties(
     out_properties->cgroup_path = session->cgroup_path;
     out_properties->leader_pid = session->leader_pid;
     out_properties->remote = session->remote;
+    return DL_OK;
+}
+
+dl_error dl_manager_dup_session_pidfd(
+    const dl_manager *manager,
+    const char *session_id,
+    int *out_pidfd)
+{
+    const dl_session *session;
+    struct pollfd descriptor;
+    int ready;
+    int duplicate;
+
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0' ||
+        out_pidfd == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    *out_pidfd = -1;
+    session = find_session(manager, session_id);
+    if (session == NULL) return DL_ERROR_NOT_FOUND;
+    if (session->leader_pidfd < 0) return DL_ERROR_INVALID_STATE;
+
+    descriptor.fd = session->leader_pidfd;
+    descriptor.events = POLLIN;
+    descriptor.revents = 0;
+    do {
+        ready = poll(&descriptor, 1U, 0);
+    } while (ready < 0 && errno == EINTR);
+    if (ready < 0 || (ready > 0 &&
+        (descriptor.revents & (POLLIN | POLLHUP | POLLERR)) != 0)) {
+        return DL_ERROR_INVALID_STATE;
+    }
+
+    duplicate = fcntl(session->leader_pidfd, F_DUPFD_CLOEXEC, 0);
+    if (duplicate < 0) return DL_ERROR_INVALID_STATE;
+    *out_pidfd = duplicate;
     return DL_OK;
 }
 
@@ -711,6 +766,7 @@ dl_error dl_manager_remove_session(dl_manager *manager, const char *session_id)
             free(session->tty);
             free(session->display);
             free(session->cgroup_path);
+            if (session->leader_pidfd >= 0) (void) close(session->leader_pidfd);
             free(session);
             return DL_OK;
         }

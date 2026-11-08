@@ -130,6 +130,13 @@ dl_error dl_manager_find_session_by_leader_pid(
     const dl_manager *manager,
     uint32_t leader_pid,
     dl_session_properties *out_properties);
+/* Duplicate the stable process identity captured at Session registration.
+ * Returns INVALID_STATE when pidfd support was unavailable or the leader exited. */
+dl_error dl_manager_dup_session_pidfd(
+    const dl_manager *manager,
+    const char *session_id,
+    int *out_pidfd);
+
 /* Session order is unspecified and may change after registration/removal. */
 size_t dl_manager_get_session_count(const dl_manager *manager);
 dl_error dl_manager_get_session_at(

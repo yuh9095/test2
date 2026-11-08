@@ -357,6 +357,21 @@ static int prop_session_leader(sd_bus *b,const char *p,const char *i,const char 
     return sd_bus_message_append(m,"u",s.leader_pid);
 }
 
+static int prop_session_cgroup(sd_bus *b, const char *path,
+    const char *interface, const char *property, sd_bus_message *reply,
+    void *userdata, sd_bus_error *error)
+{
+    dl_session_properties p = {0};
+    char cgroup[4097];
+    int r;
+    (void)b; (void)interface; (void)property; (void)error;
+    if ((r = session_lookup(path, userdata, &p)) < 0) return r;
+    if (p.cgroup_path == NULL) return sd_bus_message_append(reply, "s", "");
+    r = snprintf(cgroup, sizeof(cgroup), "/%s", p.cgroup_path);
+    if (r < 0 || (size_t)r >= sizeof(cgroup)) return -EOVERFLOW;
+    return sd_bus_message_append(reply, "s", cgroup);
+}
+
 static int parse_vt_number(const char *tty, unsigned int *out_number)
 {
     const char *digits;
@@ -752,6 +767,7 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_PROPERTY("Service","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Desktop","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Leader","u",prop_session_leader,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("CGroup","s",prop_session_cgroup,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("VTNr","u",prop_session_vtnr,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Type","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Class","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),

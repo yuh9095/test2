@@ -24,19 +24,28 @@ static int connect_socket(const char *path)
     return fd;
 }
 
+static void send_request_sized(
+    dl_session_socket *server,
+    int client_fd,
+    const dl_session_registration_request *request,
+    size_t request_size,
+    dl_session_registration_response *response)
+{
+    assert(send(client_fd, request, request_size, 0) == (ssize_t) request_size);
+    assert(dl_session_socket_dispatch(server) == 1);
+    assert(recv(client_fd, response, sizeof(*response), 0) ==
+        (ssize_t) sizeof(*response));
+    assert(response->magic == DL_SESSION_REGISTRATION_MAGIC);
+    assert(response->version == request->version);
+}
+
 static void send_request(
     dl_session_socket *server,
     int client_fd,
     const dl_session_registration_request *request,
     dl_session_registration_response *response)
 {
-    assert(send(client_fd, request, sizeof(*request), 0) ==
-        (ssize_t) sizeof(*request));
-    assert(dl_session_socket_dispatch(server) == 1);
-    assert(recv(client_fd, response, sizeof(*response), 0) ==
-        (ssize_t) sizeof(*response));
-    assert(response->magic == DL_SESSION_REGISTRATION_MAGIC);
-    assert(response->version == DL_SESSION_REGISTRATION_VERSION);
+    send_request_sized(server, client_fd, request, sizeof(*request), response);
 }
 
 int main(void)
@@ -90,6 +99,33 @@ int main(void)
     assert(response.status == DL_OK);
     assert(dl_manager_get_session_count(manager) == 0U);
     (void) close(client_fd);
+
+    /* Older v1 clients send the shorter pre-cgroup wire structure. */
+    client_fd = connect_socket(path);
+    memset(&request, 0, sizeof(request));
+    request.magic = DL_SESSION_REGISTRATION_MAGIC;
+    request.version = DL_SESSION_REGISTRATION_LEGACY_VERSION;
+    request.operation = DL_SESSION_REGISTRATION_OPEN;
+    request.uid = (uint32_t) getuid();
+    request.leader_pid = (uint32_t) getpid();
+    (void) strcpy(request.session_id, "legacy_socket");
+    send_request_sized(server, client_fd, &request,
+        DL_SESSION_REGISTRATION_V1_SIZE, &response);
+    assert(response.status == DL_OK);
+    assert(response.version == DL_SESSION_REGISTRATION_LEGACY_VERSION);
+    (void) close(client_fd);
+
+    client_fd = connect_socket(path);
+    memset(&request, 0, sizeof(request));
+    request.magic = DL_SESSION_REGISTRATION_MAGIC;
+    request.version = DL_SESSION_REGISTRATION_LEGACY_VERSION;
+    request.operation = DL_SESSION_REGISTRATION_CLOSE;
+    (void) strcpy(request.session_id, "legacy_socket");
+    send_request_sized(server, client_fd, &request,
+        DL_SESSION_REGISTRATION_V1_SIZE, &response);
+    assert(response.status == DL_OK);
+    (void) close(client_fd);
+    assert(dl_manager_get_session_count(manager) == 0U);
 
     assert(dl_session_socket_open(
         &denied_server, manager, denied_path, (uid_t) (getuid() + 1U)) == 0);

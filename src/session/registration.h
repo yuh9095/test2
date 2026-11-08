@@ -8,7 +8,9 @@
 #include <sys/types.h>
 
 #define DL_SESSION_REGISTRATION_MAGIC UINT32_C(0x444c5347)
-#define DL_SESSION_REGISTRATION_VERSION 1U
+#define DL_SESSION_REGISTRATION_VERSION 2U
+#define DL_SESSION_REGISTRATION_LEGACY_VERSION 1U
+#define DL_SESSION_REGISTRATION_CGROUP_PATH_SIZE 256U
 
 typedef enum dl_session_registration_operation {
     DL_SESSION_REGISTRATION_OPEN = 1U,
@@ -33,7 +35,13 @@ typedef struct dl_session_registration_request {
     char desktop[65];
     char tty[65];
     char display[65];
+    /* Optional path relative to the unified cgroup mount; never absolute. */
+    char cgroup_path[DL_SESSION_REGISTRATION_CGROUP_PATH_SIZE];
 } dl_session_registration_request;
+
+/* v1 ended at display[] and included the struct's trailing alignment bytes. */
+#define DL_SESSION_REGISTRATION_V1_SIZE \
+    ((offsetof(dl_session_registration_request, cgroup_path) + sizeof(uint32_t) - 1U) / sizeof(uint32_t) * sizeof(uint32_t))
 
 typedef struct dl_session_registration_response {
     uint32_t magic;

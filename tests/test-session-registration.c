@@ -34,6 +34,7 @@ static void test_open_and_close(void)
     (void) strcpy(request.service, "turnstile");
     (void) strcpy(request.desktop, "xfce");
     (void) strcpy(request.display, ":0");
+    (void) strcpy(request.cgroup_path, "user.slice/session-c1.scope");
 
     assert(dl_session_registration_apply(
         manager, peer, peer, &request, sizeof(request), &response) == DL_OK);
@@ -46,6 +47,8 @@ static void test_open_and_close(void)
     assert(properties.seat_id != NULL && strcmp(properties.seat_id, "seat0") == 0);
     assert(properties.service != NULL &&
         strcmp(properties.service, "turnstile") == 0);
+    assert(properties.cgroup_path != NULL &&
+        strcmp(properties.cgroup_path, "user.slice/session-c1.scope") == 0);
 
     initialize_request(&request);
     request.operation = DL_SESSION_REGISTRATION_CLOSE;
@@ -134,6 +137,59 @@ static void test_reject_malformed_messages(void)
         manager, peer, peer, &request, sizeof(request), &response) ==
         DL_ERROR_INVALID_ARGUMENT);
 
+    initialize_request(&request);
+    request.operation = DL_SESSION_REGISTRATION_OPEN;
+    request.leader_pid = 1U;
+    (void) strcpy(request.session_id, "bad_cgroup");
+    (void) strcpy(request.cgroup_path, "../escape");
+    assert(dl_session_registration_apply(
+        manager, peer, peer, &request, sizeof(request), &response) ==
+        DL_ERROR_INVALID_ARGUMENT);
+
+    initialize_request(&request);
+    request.operation = DL_SESSION_REGISTRATION_OPEN;
+    request.leader_pid = 1U;
+    (void) strcpy(request.session_id, "absolute_cgroup");
+    (void) strcpy(request.cgroup_path, "/user.slice/session.scope");
+    assert(dl_session_registration_apply(
+        manager, peer, peer, &request, sizeof(request), &response) ==
+        DL_ERROR_INVALID_ARGUMENT);
+
+    dl_manager_destroy(manager);
+}
+
+
+static void test_legacy_v1_wire_compatibility(void)
+{
+    dl_manager *manager = NULL;
+    dl_session_registration_request request;
+    dl_session_registration_response response;
+    dl_session_properties properties;
+    size_t legacy_size = DL_SESSION_REGISTRATION_V1_SIZE;
+    uid_t peer = getuid();
+
+    assert(dl_manager_create(&manager) == DL_OK);
+    initialize_request(&request);
+    request.version = DL_SESSION_REGISTRATION_LEGACY_VERSION;
+    request.operation = DL_SESSION_REGISTRATION_OPEN;
+    request.uid = 1002U;
+    request.leader_pid = 4545U;
+    (void) strcpy(request.session_id, "legacy_v1");
+
+    assert(dl_session_registration_apply(manager, peer, peer, &request,
+        legacy_size, &response) == DL_OK);
+    assert(response.version == DL_SESSION_REGISTRATION_LEGACY_VERSION);
+    assert(dl_manager_get_session_properties(manager, "legacy_v1",
+        &properties) == DL_OK);
+    assert(properties.cgroup_path == NULL);
+
+    initialize_request(&request);
+    request.version = DL_SESSION_REGISTRATION_LEGACY_VERSION;
+    request.operation = DL_SESSION_REGISTRATION_CLOSE;
+    (void) strcpy(request.session_id, "legacy_v1");
+    assert(dl_session_registration_apply(manager, peer, peer, &request,
+        legacy_size, &response) == DL_OK);
+
     dl_manager_destroy(manager);
 }
 
@@ -142,6 +198,7 @@ int main(void)
     test_open_and_close();
     test_remote_unseated_session_and_authentication();
     test_reject_malformed_messages();
+    test_legacy_v1_wire_compatibility();
     puts("session registration tests passed");
     return 0;
 }

@@ -48,6 +48,7 @@ typedef struct dl_session {
     char *desktop;
     char *tty;
     char *display;
+    char *cgroup_path;
     char *controller_id;
     dl_claim *claims;
     struct dl_session *next;
@@ -105,6 +106,31 @@ static dl_seat *find_session_seat(
 static char *copy_optional_string(const char *value)
 {
     return value == NULL ? NULL : copy_string(value);
+}
+
+static bool valid_cgroup_path(const char *path)
+{
+    const char *component;
+    size_t length;
+
+    if (path == NULL) return true;
+    length = strlen(path);
+    if (length == 0U || length > 4095U || path[0] == '/') return false;
+    component = path;
+    for (const char *cursor = path; ; cursor++) {
+        unsigned char ch = (unsigned char) *cursor;
+        if (ch == '\0' || ch == '/') {
+            size_t n = (size_t) (cursor - component);
+            if (n == 0U || (n == 1U && component[0] == '.') ||
+                (n == 2U && component[0] == '.' && component[1] == '.'))
+                return false;
+            if (ch == '\0') break;
+            component = cursor + 1;
+        } else if (ch < 0x21U || ch == 0x7fU || ch == '\\') {
+            return false;
+        }
+    }
+    return true;
 }
 
 static dl_session *find_session_by_leader_pid(
@@ -282,6 +308,7 @@ void dl_manager_destroy(dl_manager *manager)
         free(session->desktop);
         free(session->tty);
         free(session->display);
+        free(session->cgroup_path);
         free(session->controller_id);
         free(session);
         session = next;
@@ -494,7 +521,7 @@ dl_error dl_manager_add_session_with_properties(
     const char *seat_id;
 
     if (manager == NULL || session_id == NULL || session_id[0] == '\0' ||
-        properties == NULL) {
+        properties == NULL || !valid_cgroup_path(properties->cgroup_path)) {
         return DL_ERROR_INVALID_ARGUMENT;
     }
     seat_id = properties->seat_id;
@@ -522,6 +549,7 @@ dl_error dl_manager_add_session_with_properties(
     session->desktop = copy_optional_string(properties->desktop);
     session->tty = copy_optional_string(properties->tty);
     session->display = copy_optional_string(properties->display);
+    session->cgroup_path = copy_optional_string(properties->cgroup_path);
     if (session->id == NULL ||
         (seat_id != NULL && session->seat_id == NULL) ||
         (properties->type != NULL && session->type == NULL) ||
@@ -529,7 +557,8 @@ dl_error dl_manager_add_session_with_properties(
         (properties->service != NULL && session->service == NULL) ||
         (properties->desktop != NULL && session->desktop == NULL) ||
         (properties->tty != NULL && session->tty == NULL) ||
-        (properties->display != NULL && session->display == NULL)) {
+        (properties->display != NULL && session->display == NULL) ||
+        (properties->cgroup_path != NULL && session->cgroup_path == NULL)) {
         free(session->id);
         free(session->seat_id);
         free(session->type);
@@ -538,6 +567,7 @@ dl_error dl_manager_add_session_with_properties(
         free(session->desktop);
         free(session->tty);
         free(session->display);
+        free(session->cgroup_path);
         free(session);
         return DL_ERROR_NO_MEMORY;
     }
@@ -590,6 +620,7 @@ dl_error dl_manager_get_session_properties(
     out_properties->desktop = session->desktop;
     out_properties->tty = session->tty;
     out_properties->display = session->display;
+    out_properties->cgroup_path = session->cgroup_path;
     out_properties->leader_pid = session->leader_pid;
     out_properties->remote = session->remote;
     return DL_OK;
@@ -679,6 +710,7 @@ dl_error dl_manager_remove_session(dl_manager *manager, const char *session_id)
             free(session->desktop);
             free(session->tty);
             free(session->display);
+            free(session->cgroup_path);
             free(session);
             return DL_OK;
         }

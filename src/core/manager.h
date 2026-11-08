@@ -57,6 +57,8 @@ typedef struct dl_session_properties {
     const char *desktop;
     const char *tty;
     const char *display;
+    /* Relative unified-cgroup path, without a leading slash. */
+    const char *cgroup_path;
     uint32_t leader_pid;
     bool remote;
 } dl_session_properties;

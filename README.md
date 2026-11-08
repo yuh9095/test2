@@ -80,6 +80,20 @@ This is device discovery and core registration, not yet a complete login1
 service or graphical session manager. Logical device claims and the current
 device-FD APIs are not yet connected to Unix FD transfer over D-Bus.
 
+## Session registration and cgroup metadata
+
+The privileged Unix `SOCK_SEQPACKET` registration protocol is now version 2
+and accepts an optional unified-cgroup path relative to the cgroup mount.
+Paths are syntax-checked (absolute paths, empty components, `.` / `..`, and
+control characters are rejected), stored in the core Session model, and
+exposed through the login1 Session `CGroup` property. Legacy v1 wire messages,
+including their shorter packet size, remain accepted.
+
+This metadata is not yet proof of live process membership. Session-wide
+`Terminate()` / `Kill()` remain explicitly unsupported until the execution
+path securely walks cgroup directories using file descriptors, verifies that
+the registered Leader is still a member, and protects against PID reuse.
+
 ## Planned internal areas
 
 These are conceptual boundaries, not a commitment to separate daemons:

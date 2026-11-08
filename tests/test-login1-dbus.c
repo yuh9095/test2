@@ -94,6 +94,7 @@ int main(void)
     session_properties.class_name = "user";
     session_properties.service = "test";
     session_properties.leader_pid = (uint32_t)getpid();
+    session_properties.cgroup_path = "test.slice/test-session.scope";
     assert(dl_manager_add_session_with_properties(manager,"test-session",
         (uint32_t)getuid(),&session_properties)==DL_OK);
     assert(dl_login1_open_address(&login1,manager,address)==0);
@@ -123,6 +124,17 @@ int main(void)
         uint32_t vtnr=99U;
         assert(sd_bus_message_read(reply,"u",&vtnr)>=0);
         assert(vtnr==0U);
+    }
+    sd_bus_message_unref(reply);
+    reply=NULL;
+    r=sd_bus_get_property(client,"org.freedesktop.login1",object_path,
+        "org.freedesktop.login1.Session","CGroup",&error,&reply,"s");
+    assert(r>=0);
+    {
+        const char *cgroup_path=NULL;
+        assert(sd_bus_message_read(reply,"s",&cgroup_path)>=0);
+        assert(cgroup_path!=NULL &&
+            strcmp(cgroup_path,"/test.slice/test-session.scope")==0);
     }
     sd_bus_message_unref(reply);
     reply=NULL;

@@ -13,7 +13,7 @@ Manager：
 
 Session：
 - 基础属性：Id、User、Name、Seat、TTY、Display、Remote、Service、Desktop、
-  Leader、Type、Class、Active
+  Leader、CGroup、VTNr、Type、Class、Active
 - `Activate()`：更新核心模型中的 Seat 活动 Session，并发送 Active 属性变化通知。
   当前尚未连接 VT ioctl，因此不等同于完整物理 VT 切换。
 - `Lock()`、`Unlock()`：向对应 Session 对象发出 Lock/Unlock 信号。
@@ -32,13 +32,12 @@ User 对象路径。
 ## 尚未完成的语义
 
 - **Terminate / Kill**：目前注册方法但返回 `org.freedesktop.DBus.Error.NotSupported`。
-  核心 Session 只记录 Leader PID，没有完整进程成员表或可信 cgroup 归属；
-  在没有可靠成员关系和 PID 生命周期保护前，不能安全地向不相关进程发送信号。
+  注册协议 v2 已支持可选的相对 unified-cgroup 路径元数据，核心会校验路径格式并公开 `CGroup` 属性；旧 v1 socket 客户端仍兼容。但目前尚未核验 Leader 与 cgroup 的实时成员关系，也没有 PIDFD 生命周期保护，因此仍不能安全地向 Session 进程发送信号。
 - **Activate**：目前切换逻辑活动 Session，不执行 VT_ACTIVATE / VT_WAITACTIVE。
 - **设备暂停通知**：核心具备 pause state，但尚未将 seatd/libseat 的暂停/恢复事件完整映射为
   login1 的 PauseDevice / ResumeDevice 信号。
 - **D-Bus 运行时测试**：已增加私有总线端到端测试，覆盖当前列出的 Manager/Session 方法；
-  尚未覆盖设备 FD、Pause/Resume 信号、VT 切换和完整桌面客户端行为。
+  已覆盖 `CGroup` 属性和当前列出的 Manager/Session 方法；尚未覆盖设备 FD、Pause/Resume 信号、VT 切换和完整桌面客户端行为。
 - `GetSessionByPID` 仍只匹配已登记 Leader PID；PID reuse / pidfd 保护及全 Session
   进程映射仍待实现。
 

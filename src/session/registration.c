@@ -52,7 +52,29 @@ static const char *optional_value(const char *value)
     return value[0] == '\0' ? NULL : value;
 }
 
-static bool validate_open_request(const dl_session_registration_request *request)
+static bool valid_cgroup_path(const char *value)
+{
+    const char *component;
+    if (value[0] == '\0') return true;
+    if (value[0] == '/') return false;
+    component = value;
+    for (const char *cursor = value; ; cursor++) {
+        unsigned char ch = (unsigned char) *cursor;
+        if (ch == '\0' || ch == '/') {
+            size_t n = (size_t) (cursor - component);
+            if (n == 0U || (n == 1U && component[0] == '.') ||
+                (n == 2U && component[0] == '.' && component[1] == '.'))
+                return false;
+            if (ch == '\0') return true;
+            component = cursor + 1;
+        } else if (ch < 0x21U || ch == 0x7fU || ch == '\\') {
+            return false;
+        }
+    }
+}
+
+static bool validate_open_request(const dl_session_registration_request *request,
+    bool has_cgroup)
 {
     return request->leader_pid != 0U &&
         valid_session_id(request->session_id) &&
@@ -64,7 +86,10 @@ static bool validate_open_request(const dl_session_registration_request *request
         bounded_string(request->tty, sizeof(request->tty), false) &&
         bounded_string(request->display, sizeof(request->display), false) &&
         (request->flags & ~DL_SESSION_REGISTRATION_FLAG_REMOTE) == 0U &&
-        request->reserved == 0U;
+        request->reserved == 0U &&
+        (!has_cgroup ||
+         (bounded_string(request->cgroup_path, sizeof(request->cgroup_path), false) &&
+          valid_cgroup_path(request->cgroup_path)));
 }
 
 dl_error dl_session_registration_apply(
@@ -81,12 +106,17 @@ dl_error dl_session_registration_apply(
         return DL_ERROR_INVALID_ARGUMENT;
     }
     response->magic = DL_SESSION_REGISTRATION_MAGIC;
-    response->version = DL_SESSION_REGISTRATION_VERSION;
+    response->version = request != NULL &&
+        request->version == DL_SESSION_REGISTRATION_LEGACY_VERSION ?
+        DL_SESSION_REGISTRATION_LEGACY_VERSION : DL_SESSION_REGISTRATION_VERSION;
     response->reserved = 0U;
     response->status = (int32_t) DL_ERROR_INVALID_ARGUMENT;
 
     if (manager == NULL || request == NULL ||
-        request_size != sizeof(*request)) {
+        !((request->version == DL_SESSION_REGISTRATION_LEGACY_VERSION &&
+           request_size == DL_SESSION_REGISTRATION_V1_SIZE) ||
+          (request->version == DL_SESSION_REGISTRATION_VERSION &&
+           request_size == sizeof(*request)))) {
         return DL_ERROR_INVALID_ARGUMENT;
     }
     if (peer_uid != allowed_peer_uid) {
@@ -94,7 +124,8 @@ dl_error dl_session_registration_apply(
         goto done;
     }
     if (request->magic != DL_SESSION_REGISTRATION_MAGIC ||
-        request->version != DL_SESSION_REGISTRATION_VERSION) {
+        (request->version != DL_SESSION_REGISTRATION_VERSION &&
+         request->version != DL_SESSION_REGISTRATION_LEGACY_VERSION)) {
         result = DL_ERROR_INVALID_ARGUMENT;
         goto done;
     }
@@ -102,7 +133,9 @@ dl_error dl_session_registration_apply(
     if (request->operation == DL_SESSION_REGISTRATION_OPEN) {
         dl_session_properties properties = {0};
 
-        if (!validate_open_request(request)) {
+        bool has_cgroup = request->version >= DL_SESSION_REGISTRATION_VERSION;
+
+        if (!validate_open_request(request, has_cgroup)) {
             result = DL_ERROR_INVALID_ARGUMENT;
             goto done;
         }
@@ -113,6 +146,8 @@ dl_error dl_session_registration_apply(
         properties.desktop = optional_value(request->desktop);
         properties.tty = optional_value(request->tty);
         properties.display = optional_value(request->display);
+        properties.cgroup_path = has_cgroup ?
+            optional_value(request->cgroup_path) : NULL;
         properties.leader_pid = request->leader_pid;
         properties.remote =
             (request->flags & DL_SESSION_REGISTRATION_FLAG_REMOTE) != 0U;
@@ -128,7 +163,9 @@ dl_error dl_session_registration_apply(
             !bytes_are_zero(request->service, sizeof(request->service)) ||
             !bytes_are_zero(request->desktop, sizeof(request->desktop)) ||
             !bytes_are_zero(request->tty, sizeof(request->tty)) ||
-            !bytes_are_zero(request->display, sizeof(request->display))) {
+            !bytes_are_zero(request->display, sizeof(request->display)) ||
+            (request->version >= DL_SESSION_REGISTRATION_VERSION &&
+             !bytes_are_zero(request->cgroup_path, sizeof(request->cgroup_path)))) {
             result = DL_ERROR_INVALID_ARGUMENT;
             goto done;
         }

@@ -63,15 +63,19 @@ static int handle_client(dl_session_socket *server, int client_fd)
         return 0;
     }
 
-    if ((size_t) received != sizeof(request) ||
-        (message.msg_flags & MSG_TRUNC) != 0) {
+    if ((size_t) received != sizeof(request) &&
+        (size_t) received != DL_SESSION_REGISTRATION_V1_SIZE) {
+        response.magic = DL_SESSION_REGISTRATION_MAGIC;
+        response.version = DL_SESSION_REGISTRATION_VERSION;
+        response.status = (int32_t) DL_ERROR_INVALID_ARGUMENT;
+    } else if ((message.msg_flags & MSG_TRUNC) != 0) {
         response.magic = DL_SESSION_REGISTRATION_MAGIC;
         response.version = DL_SESSION_REGISTRATION_VERSION;
         response.status = (int32_t) DL_ERROR_INVALID_ARGUMENT;
     } else {
         (void) dl_session_registration_apply(
             server->manager, peer_uid, server->allowed_peer_uid,
-            &request, sizeof(request), &response);
+            &request, (size_t) received, &response);
     }
 
     if (send(client_fd, &response, sizeof(response), MSG_NOSIGNAL) !=

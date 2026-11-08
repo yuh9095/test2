@@ -430,7 +430,13 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_METHOD("PauseDeviceComplete","uu","",method_pause_complete,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
-static const sd_bus_vtable user_vtable[] = {\n SD_BUS_VTABLE_START(0),\n SD_BUS_PROPERTY("UID","u",prop_user_uid,0,SD_BUS_VTABLE_PROPERTY_CONST),\n SD_BUS_PROPERTY("Name","s",prop_user_name,0,SD_BUS_VTABLE_PROPERTY_CONST),\n SD_BUS_VTABLE_END\n};\nstatic const sd_bus_vtable seat_vtable[] = {
+static const sd_bus_vtable user_vtable[] = {
+    SD_BUS_VTABLE_START(0),
+    SD_BUS_PROPERTY("UID","u",prop_user_uid,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Name","s",prop_user_name,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_VTABLE_END
+};
+static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_PROPERTY("Id","s",prop_seat_id,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("ActiveSession","(so)",prop_seat_active,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
@@ -450,7 +456,8 @@ int dl_login1_open(dl_login1 **out, dl_manager *manager)
         BUS_NAME ".Manager",manager_vtable,manager); if (r<0) goto fail;
     r=sd_bus_add_fallback_vtable(s->bus,&s->session_slot,SESSION_PATH,
         BUS_NAME ".Session",session_vtable,NULL,manager); if (r<0) goto fail;
-    r=sd_bus_add_fallback_vtable(s->bus,&s->user_slot,ROOT_PATH "/user",BUS_NAME ".User",user_vtable,NULL,manager); if(r<0) goto fail;\n    r=sd_bus_add_fallback_vtable(s->bus,&s->seat_slot,SEAT_PATH,
+    r=sd_bus_add_fallback_vtable(s->bus,&s->user_slot,ROOT_PATH "/user",BUS_NAME ".User",user_vtable,NULL,manager); if(r<0) goto fail;
+    r=sd_bus_add_fallback_vtable(s->bus,&s->seat_slot,SEAT_PATH,
         BUS_NAME ".Seat",seat_vtable,NULL,manager); if (r<0) goto fail;
     r=sd_bus_request_name(s->bus,BUS_NAME,0); if (r<0) goto fail;
     *out=s; return 0;
@@ -470,7 +477,8 @@ int dl_login1_dispatch(dl_login1 *s)
 void dl_login1_close(dl_login1 *s)
 {
     if (!s) return;
-    s->seat_slot=sd_bus_slot_unref(s->seat_slot);\n    s->user_slot=sd_bus_slot_unref(s->user_slot);
+    s->seat_slot=sd_bus_slot_unref(s->seat_slot);
+    s->user_slot=sd_bus_slot_unref(s->user_slot);
     s->session_slot=sd_bus_slot_unref(s->session_slot);
     s->manager_slot=sd_bus_slot_unref(s->manager_slot);
     s->bus=sd_bus_flush_close_unref(s->bus);

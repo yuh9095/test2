@@ -1027,6 +1027,7 @@ dl_error dl_manager_register_device_node(
     uint64_t *out_generation)
 {
     dl_error result;
+    dl_seat *seat;
     dl_device *device;
     char *path;
 
@@ -1046,7 +1047,20 @@ dl_error dl_manager_register_device_node(
         free(path);
         return result;
     }
-    device = find_device(find_seat(manager, seat_id), major_number, minor_number);
+    seat = find_seat(manager, seat_id);
+    if (seat == NULL) {
+        (void) dl_manager_remove_device(
+            manager, seat_id, major_number, minor_number);
+        free(path);
+        return DL_ERROR_NOT_FOUND;
+    }
+    device = find_device(seat, major_number, minor_number);
+    if (device == NULL) {
+        (void) dl_manager_remove_device(
+            manager, seat_id, major_number, minor_number);
+        free(path);
+        return DL_ERROR_INVALID_STATE;
+    }
     device->devnode = path;
     device->master_of_seat = master_of_seat;
     device->capabilities = capabilities;

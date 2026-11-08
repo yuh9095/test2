@@ -60,7 +60,7 @@ jobs:
     env:
       CC: gcc
       CFLAGS: -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -fno-common -fPIE -Wformat=2 -Werror=format-security -Werror=implicit-function-declaration
-      LDFLAGS: -Wl,-z,relro,-z,now -Wl,-z,noexecstack -pie
+      LDFLAGS: -Wl,-z,relro,-z,now -Wl,-z,noexecstack
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain

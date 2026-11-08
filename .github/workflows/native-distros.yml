@@ -204,6 +204,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
           git clone --filter=blob:none \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" .
           git checkout --detach "${GITHUB_SHA}"

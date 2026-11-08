@@ -15,6 +15,9 @@ int dl_session_cgroup_contains_pid(
     uint32_t pid,
     bool *out_contains);
 
+/* Send a signal to the process identified by a stable pidfd. No PID fallback. */
+int dl_session_pidfd_send_signal(int pidfd, int signal_number);
+
 /* Write cgroup.kill only after the stable leader pidfd is live and the
  * registered leader PID is still listed in this exact cgroup directory.
  * Returns -1 with errno=ENOTSUP when cgroup.kill/pidfd support is absent. */

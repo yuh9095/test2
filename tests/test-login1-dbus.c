@@ -5,6 +5,8 @@
 #include <assert.h>
 #include <pthread.h>
 #include <poll.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -85,10 +87,20 @@ int main(void)
     const char *object_path_value=NULL;
     char object_path[256];
     int r;
+    pid_t kill_child;
+    dl_session_properties kill_properties = {0};
     dl_session_properties session_properties = {0};
     assert(address!=NULL && address[0] != 0);
     assert(dl_manager_create(&manager)==DL_OK);
     assert(dl_manager_add_seat(manager,"seat0")==DL_OK);
+    kill_child = fork();
+    assert(kill_child >= 0);
+    if (kill_child == 0) { for (;;) pause(); }
+    kill_properties.leader_pid = (uint32_t)kill_child;
+    kill_properties.class_name = "user";
+    kill_properties.service = "test";
+    assert(dl_manager_add_session_with_properties(manager,"kill-test",
+        (uint32_t)getuid(),&kill_properties)==DL_OK);
     session_properties.seat_id = "seat0";
     session_properties.type = "tty";
     session_properties.class_name = "user";
@@ -154,18 +166,31 @@ int main(void)
     call_ok(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","ListUsers","");
 
-    /* Process-wide termination must never report success until the
-     * registration layer supplies trustworthy process membership. */
+    /* KillSession(leader) must signal the exact pidfd-captured process. */
+    {
+        char kill_path[256];
+        int status = 0;
+        const char *kill_object = NULL;
+        r = sd_bus_call_method(client,"org.freedesktop.login1",
+            "/org/freedesktop/login1","org.freedesktop.login1.Manager",
+            "GetSession",&error,&reply,"s","kill-test");
+        assert(r >= 0);
+        assert(sd_bus_message_read(reply,"o",&kill_object) >= 0);
+        assert(snprintf(kill_path,sizeof(kill_path),"%s",kill_object) > 0);
+        sd_bus_message_unref(reply); reply = NULL;
+        call_ok(client,"/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager","KillSession","ssi",
+            "kill-test","leader",SIGTERM);
+        assert(waitpid(kill_child,&status,0)==kill_child);
+        assert(WIFSIGNALED(status) && WTERMSIG(status)==SIGTERM);
+        call_not_supported(client,kill_path,
+            "org.freedesktop.login1.Session","Kill","si","all",SIGTERM);
+    }
     call_not_supported(client,object_path,
         "org.freedesktop.login1.Session","Terminate","");
-    call_not_supported(client,object_path,
-        "org.freedesktop.login1.Session","Kill","si","leader",15);
     call_not_supported(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","TerminateSession","s",
         "test-session");
-    call_not_supported(client,"/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager","KillSession","ssi",
-        "test-session","leader",15);
 
     sd_bus_close_unref(client);
     atomic_store(&state.stopping,true);

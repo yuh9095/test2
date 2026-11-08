@@ -1,8 +1,11 @@
 #define _GNU_SOURCE
 #include "dbus/login1.h"
 #include "platform/linux/vt.h"
+#include "session/process.h"
 #include <systemd/sd-bus.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -702,8 +705,116 @@ static int method_pause_complete(sd_bus_message*m,void*u,sd_bus_error*e)
  sd_bus_creds_unref(c);if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"PauseDeviceComplete failed (%d)",r);
  return sd_bus_reply_method_return(m,"");
 }
+static int kill_session_processes(dl_manager *manager, const char *session_id,
+    const char *who, int signal_number)
+{
+    dl_session_properties p = {0};
+    int pidfd = -1, root_fd = -1, cgroup_fd = -1, r = -1;
+    if (who == NULL || (strcmp(who, "leader") != 0 && strcmp(who, "all") != 0) ||
+        signal_number <= 0 || signal_number > SIGRTMAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (dl_manager_get_session_properties(manager, session_id, &p) != DL_OK) {
+        errno = ENOENT;
+        return -1;
+    }
+    if (dl_manager_dup_session_pidfd(manager, session_id, &pidfd) != DL_OK) {
+        errno = ENOTSUP;
+        return -1;
+    }
+    if (strcmp(who, "leader") == 0) {
+        r = dl_session_pidfd_send_signal(pidfd, signal_number);
+        goto done;
+    }
+    /* cgroup.kill is an unconditional SIGKILL operation, not a general
+     * signal API. Never translate another signal into it. */
+    if (signal_number != SIGKILL || p.cgroup_path == NULL ||
+        p.cgroup_path[0] == '\\0') {
+        errno = ENOTSUP;
+        goto done;
+    }
+    root_fd = open("/sys/fs/cgroup", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (root_fd < 0) goto done;
+    cgroup_fd = dl_session_cgroup_openat(root_fd, p.cgroup_path);
+    if (cgroup_fd < 0) goto done;
+    r = dl_session_cgroup_kill_all(cgroup_fd, p.leader_pid, pidfd);
+done:
+    {
+        int saved_errno = errno;
+        if (cgroup_fd >= 0) (void) close(cgroup_fd);
+        if (root_fd >= 0) (void) close(root_fd);
+        (void) close(pidfd);
+        errno = saved_errno;
+    }
+    return r;
+}
+
+static int kill_error_reply(sd_bus_message *m, int error_number)
+{
+    if (error_number == EINVAL)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_INVALID_ARGS,
+            "Invalid process target or signal");
+    if (error_number == ENOENT || error_number == ESRCH)
+        return sd_bus_reply_method_errorf(m, "org.freedesktop.login1.NoSuchSession",
+            "Session leader or registered cgroup membership no longer exists");
+    if (error_number == ENOTSUP || error_number == EOPNOTSUPP ||
+        error_number == ENOSYS || error_number == EACCES || error_number == EPERM)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
+            "Requested process operation is not supported safely");
+    return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+        "Process operation failed (%d)", error_number);
+}
+
+static int method_session_kill(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    char id[128];
+    uint32_t uid;
+    const char *sender;
+    const char *who = NULL;
+    sd_bus_creds *creds = NULL;
+    int signal_number, r;
+    (void) error;
+    if ((r = auth_session(m, userdata, id, sizeof(id), &uid, &sender, &creds)) < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Not authorized to kill this Session");
+    r = sd_bus_message_read(m, "si", &who, &signal_number);
+    sd_bus_creds_unref(creds);
+    if (r < 0) return r;
+    if (kill_session_processes(userdata, id, who, signal_number) < 0)
+        return kill_error_reply(m, errno);
+    return sd_bus_reply_method_return(m, "");
+}
+
+static int method_manager_kill_session(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    const char *session_id = NULL, *who = NULL;
+    dl_session_properties p = {0};
+    sd_bus_creds *creds = NULL;
+    uid_t euid;
+    int signal_number, r;
+    (void) error;
+    if ((r = sd_bus_message_read(m, "ssi", &session_id, &who,
+            &signal_number)) < 0) return r;
+    if (dl_manager_get_session_properties(userdata, session_id, &p) != DL_OK)
+        return sd_bus_reply_method_errorf(m,
+            "org.freedesktop.login1.NoSuchSession", "Session does not exist");
+    if ((r = sd_bus_query_sender_creds(m, SD_BUS_CREDS_EUID, &creds)) < 0)
+        return r;
+    r = sd_bus_creds_get_euid(creds, &euid);
+    sd_bus_creds_unref(creds);
+    if (r < 0) return r;
+    if (euid != 0 && (uint32_t)euid != p.uid)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Only root or the Session owner may kill this Session");
+    if (kill_session_processes(userdata, session_id, who, signal_number) < 0)
+        return kill_error_reply(m, errno);
+    return sd_bus_reply_method_return(m, "");
+}
+
 static int method_termination_unsupported(sd_bus_message*m,void*u,sd_bus_error*e)
-{(void)u;(void)e;return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_NOT_SUPPORTED,"Session-wide process membership tracking is not implemented");}
+{(void)u;(void)e;return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_NOT_SUPPORTED,"Graceful asynchronous Session termination is not implemented");}
 static int user_path_uid(const char*p,uint32_t*uid)
 {
  const char*prefix=ROOT_PATH "/user/_";char*end=NULL;unsigned long v;
@@ -752,7 +863,7 @@ static const sd_bus_vtable manager_vtable[] = {
     SD_BUS_METHOD("ListSeats","","a(so)",list_seats,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSeat","s","o",get_seat,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("TerminateSession","s","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("KillSession","ssi","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("KillSession","ssi","",method_manager_kill_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
 static const sd_bus_vtable session_vtable[] = {
@@ -776,7 +887,7 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_METHOD("Lock","","",method_lock,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Unlock","","",method_unlock,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Terminate","","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("Kill","si","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Kill","si","",method_session_kill,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("TakeControl","b","",method_take_control,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ReleaseControl","","",method_release_control,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("TakeDevice","uu","hb",method_take_device,SD_BUS_VTABLE_UNPRIVILEGED),

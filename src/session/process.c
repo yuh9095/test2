@@ -169,6 +169,26 @@ done:
     return result;
 }
 
+int dl_session_pidfd_send_signal(int pidfd, int signal_number)
+{
+#if defined(SYS_pidfd_send_signal)
+    if (pidfd < 0 || signal_number <= 0 || signal_number > SIGRTMAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (syscall(SYS_pidfd_send_signal, pidfd, signal_number, NULL, 0U) == 0)
+        return 0;
+    if (errno == ENOSYS || errno == EINVAL)
+        errno = ENOTSUP;
+    return -1;
+#else
+    (void) pidfd;
+    (void) signal_number;
+    errno = ENOTSUP;
+    return -1;
+#endif
+}
+
 static int pidfd_is_live(int pidfd)
 {
 #if defined(SYS_pidfd_send_signal)

@@ -29,7 +29,7 @@ platform_lib=static_library('dinit-logind-linux-platform',
 platform_dep=declare_dependency(link_with:platform_lib,dependencies:[udev_dep,core_dep,vt_dep],
   include_directories:include_directories('src'))
 login1_lib=static_library('dinit-logind-login1',files('src/dbus/login1.c'),
-  dependencies:[systemd_dep,core_dep,vt_dep],include_directories:include_directories('src'),install:false)
+  dependencies:[systemd_dep,core_dep,vt_dep,session_dep],include_directories:include_directories('src'),install:false)
 login1_dep=declare_dependency(link_with:login1_lib,
   dependencies:[systemd_dep,core_dep,vt_dep],include_directories:include_directories('src'))
 daemon=executable('dinit-logind','src/daemon/main.c',

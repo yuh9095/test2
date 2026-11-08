@@ -155,6 +155,22 @@ jobs:
             family: arch
             compiler: clang
 
+          # Chimera publishes native OCI images for both supported CI
+          # architectures.  Its toolchain is LLVM/Clang and its GNU Make
+          # package is explicitly named gmake.
+          - distro: "Chimera Linux"
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: chimeralinux/chimera:latest
+            family: chimera
+            compiler: clang
+          - distro: "Chimera Linux"
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: chimeralinux/chimera:latest
+            family: chimera
+            compiler: clang
+
 
     env:
       CC: ${{ matrix.compiler }}
@@ -181,6 +197,11 @@ jobs:
               apk add --no-cache build-base gcc clang meson ninja pkgconf \
                 eudev-dev elogind-dev dbus linux-pam-dev linux-headers git
               ;;
+            chimera)
+              apk update
+              apk add base-cbuild-bootstrap clang lld gmake meson ninja pkgconf \
+                elogind-devel udev-devel linux-pam-devel dbus git
+              ;;
             suse)
               zypper --non-interactive refresh
               zypper --non-interactive install --no-recommends \
@@ -197,7 +218,7 @@ jobs:
           esac
 
       - uses: actions/checkout@v4
-        if: matrix.family != 'alpine' || matrix.arch != 'aarch64'
+        if: matrix.family != 'alpine' && matrix.family != 'chimera'
 
       - name: Checkout source in Alpine ARM64 container
         if: matrix.family == 'alpine' && matrix.arch == 'aarch64'
@@ -210,6 +231,14 @@ jobs:
           git checkout --detach "${GITHUB_SHA}"
           git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
 
+      - name: Checkout source in Chimera container
+        if: matrix.family == 'chimera'
+        run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          git clone --filter=blob:none \
+            "https://github.com/${GITHUB_REPOSITORY}.git" .
+          git checkout --detach "${GITHUB_SHA}"
+
       - name: Record native execution environment
         run: |
           uname -a
@@ -218,6 +247,12 @@ jobs:
           "${CC}" --version
           meson --version
           ninja --version
+          if [ "${{ matrix.family }}" = chimera ]; then
+            gmake --version
+            apk info -e gmake
+            pkg-config --modversion libsystemd
+            pkg-config --modversion libudev
+          fi
 
       - name: Configure
         run: meson setup build --buildtype=debug
@@ -225,10 +260,19 @@ jobs:
       - name: Compile with strict warnings
         run: meson compile -C build
 
-      - name: Run complete test suite
-        run: meson test -C build --print-errorlogs --no-rebuild
+      - name: Run complete test suite repeatedly
+        run: |
+          if [ "${{ matrix.family }}" = chimera ]; then
+            meson test -C build --print-errorlogs --no-rebuild --repeat=10
+          else
+            meson test -C build --print-errorlogs --no-rebuild --repeat=3
+          fi
 
-      - name: Verify installed binary metadata
+      - name: Verify staged installation and executable smoke tests
         run: |
           meson install -C build --destdir "$PWD/stage"
-          test -x stage/usr/local/bin/dinit-logind || find stage -type f -name dinit-logind -print
+          installed_bin="$(find stage -type f -name dinit-logind -perm -111 -print -quit)"
+          test -n "$installed_bin"
+          "$installed_bin" --version
+          "$installed_bin" --help >/dev/null
+          test -s "$installed_bin"

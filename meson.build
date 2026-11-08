@@ -30,6 +30,7 @@ linux_platform_lib = static_library(
   'dinit-logind-linux-platform',
   files(
     'src/platform/linux/udev.c',
+    'src/platform/linux/udev-manager.c',
     'src/platform/linux/vt.c',
   ),
   dependencies: udev_dep,
@@ -39,7 +40,7 @@ linux_platform_lib = static_library(
 
 linux_platform_dep = declare_dependency(
   link_with: linux_platform_lib,
-  dependencies: udev_dep,
+  dependencies: [udev_dep, core_dep],
   include_directories: include_directories('src'),
 )
 
@@ -58,3 +59,11 @@ platform_test_exe = executable(
 )
 
 test('linux-platform-api', platform_test_exe, timeout: 30)
+
+udev_manager_test_exe = executable(
+  'test-udev-manager',
+  'tests/test-udev-manager.c',
+  dependencies: linux_platform_dep,
+)
+
+test('udev-manager-integration', udev_manager_test_exe, timeout: 30)

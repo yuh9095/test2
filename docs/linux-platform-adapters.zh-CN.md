@@ -1,7 +1,7 @@
 # Linux device and VT adapters
 
-This directory contains Linux-only platform adapters. It is deliberately
-separate from the core state model and does not own Seat or Session policy.
+This directory contains Linux-only platform adapters. The core state model
+remains independent of D-Bus, PAM, udev, seatd, and systemd.
 
 ## eudev/libudev adapter
 
@@ -10,12 +10,29 @@ device node identity (major/minor), syspath, subsystem, devtype, `ID_SEAT`,
 and `ID_SEAT_MASTER` metadata to a caller-supplied callback. String members
 are borrowed for the duration of the callback.
 
-The adapter does not create Seats, grant device FDs, or decide whether a
-device is authorized. The caller must apply the project Seat policy and must
-not assume that an absent `ID_SEAT` property means `seat0`.
+## eudev-to-Seat Manager integration
 
-The monitor descriptor is non-owning and may be integrated with poll/epoll.
-Call `dl_udev_dispatch()` after it becomes readable.
+`udev-manager.c` connects that adapter to the existing core Manager. It
+enumerates devices, exposes the monitor FD for poll/epoll, and applies add,
+change, and remove events to the core device registry. It caches the last
+syspath-to-Seat/device mapping so a remove event can clean up the correct
+core device even when udev no longer supplies a devnode or `ID_SEAT`.
+
+Seat assignment is deliberately policy-driven. The supplied policy callback
+chooses the Seat and capability flags. The adapter does not silently assign
+devices without an explicit Seat decision to `seat0`; a policy can use
+`ID_SEAT` where available and apply any additional Linux-specific rules it
+needs. Only character devices are registered for session device access.
+
+The integration creates a core Seat when the policy first selects it. It
+does not start eudevd, change udev rules, grant access by itself, or replace
+the caller's responsibility to run the monitor FD in its event loop. Device
+FD authorization remains in the core Manager and the future login1 D-Bus
+transport.
+
+Open the monitor before calling enumerate so events occurring during the
+initial inventory scan are queued for subsequent dispatch. Call
+`dl_udev_seat_monitor_dispatch()` whenever its FD becomes readable.
 
 ## VT adapter
 

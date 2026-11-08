@@ -38,6 +38,24 @@ static void test_seat_session_and_device_lifecycle(void)
 
     assert(dl_manager_claim_device(manager, "c1", 226U, 0U, &inactive) == DL_OK);
     assert(!inactive);
+    assert(dl_manager_get_device_pause_state(
+        manager, "c1", 226U, 0U) == DL_DEVICE_ACTIVE);
+    assert(dl_manager_pause_device(
+        manager, "c1", 226U, 0U, false) == DL_OK);
+    assert(dl_manager_get_device_pause_state(
+        manager, "c1", 226U, 0U) == DL_DEVICE_PAUSE_PENDING);
+    assert(dl_manager_complete_device_pause(
+        manager, "c1", 226U, 0U) == DL_OK);
+    assert(dl_manager_complete_device_pause(
+        manager, "c1", 226U, 0U) == DL_ERROR_INVALID_STATE);
+    assert(dl_manager_get_device_pause_state(
+        manager, "c1", 226U, 0U) == DL_DEVICE_PAUSED);
+    assert(dl_manager_resume_device(
+        manager, "c1", 226U, 0U) == DL_OK);
+    assert(dl_manager_pause_device(
+        manager, "c1", 226U, 0U, true) == DL_OK);
+    assert(dl_manager_get_device_pause_state(
+        manager, "c1", 226U, 0U) == DL_DEVICE_PAUSED);
     assert(dl_manager_remove_device(manager, "seat0", 226U, 0U) == DL_OK);
     assert(dl_manager_device_generation(manager, "seat0", 226U, 0U) == 0U);
 

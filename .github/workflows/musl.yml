@@ -1,0 +1,35 @@
+name: musl Build and Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: musl-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  musl:
+    name: musl / ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64, i386, armv7]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test on Alpine Linux (musl)
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: ${{ matrix.arch }}
+          distro: alpine_latest
+          githubToken: ${{ github.token }}
+          install: |
+            apk add --no-cache build-base meson ninja eudev-dev elogind-dev linux-headers
+          run: |
+            meson setup build
+            meson compile -C build
+            meson test -C build --print-errorlogs

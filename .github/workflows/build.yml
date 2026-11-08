@@ -1,4 +1,4 @@
-name: C11 Build and Test
+name: glibc Build and Test
 on:
   push:
     branches: [main]
@@ -8,17 +8,29 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: build-ci-${{ github.workflow }}-${{ github.ref }}
+  group: glibc-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
-    name: Build and test (${{ matrix.compiler }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: ${{ matrix.arch }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang]
+        include:
+          - arch: x86-64
+            runner: ubuntu-24.04
+            compiler: gcc
+          - arch: x86-64
+            runner: ubuntu-24.04
+            compiler: clang
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            compiler: gcc
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            compiler: clang
     env:
       CC: ${{ matrix.compiler }}
     steps:
@@ -27,6 +39,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes meson ninja-build libudev-dev libpam0g-dev libsystemd-dev
-      - run: meson setup build
-      - run: meson compile -C build
-      - run: meson test -C build --print-errorlogs
+      - name: Configure
+        run: meson setup build
+      - name: Compile
+        run: meson compile -C build
+      - name: Test
+        run: meson test -C build --print-errorlogs

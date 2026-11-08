@@ -3,12 +3,26 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct dl_manager dl_manager;
+
+typedef enum dl_device_capability {
+    DL_DEVICE_CAP_NONE = 0U,
+    DL_DEVICE_CAP_TTY = 1U << 0,
+    DL_DEVICE_CAP_GRAPHICAL = 1U << 1,
+    DL_DEVICE_CAP_VT = 1U << 2
+} dl_device_capability;
+
+typedef struct dl_seat_capabilities {
+    bool has_tty;
+    bool has_graphical;
+    bool has_vt;
+} dl_seat_capabilities;
 
 typedef enum dl_device_pause_state {
     DL_DEVICE_UNCLAIMED = 0,
@@ -45,6 +59,20 @@ dl_error dl_manager_add_device(
     uint32_t major_number,
     uint32_t minor_number,
     uint64_t *out_generation);
+/* Register a trusted device-node path supplied by the device-enumeration adapter. */
+dl_error dl_manager_register_device_node(
+    dl_manager *manager,
+    const char *seat_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    const char *devnode,
+    bool master_of_seat,
+    unsigned int capabilities,
+    uint64_t *out_generation);
+dl_error dl_manager_get_seat_capabilities(
+    const dl_manager *manager,
+    const char *seat_id,
+    dl_seat_capabilities *out_capabilities);
 dl_error dl_manager_remove_device(
     dl_manager *manager,
     const char *seat_id,
@@ -82,6 +110,42 @@ dl_error dl_manager_release_device(
     const char *session_id,
     uint32_t major_number,
     uint32_t minor_number);
+
+/* Controller ownership is tied to a D-Bus connection identity. */
+dl_error dl_manager_take_control(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id,
+    uint32_t caller_uid,
+    bool force);
+dl_error dl_manager_release_control(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id);
+dl_error dl_manager_take_device_fd(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    int *out_fd,
+    bool *out_session_inactive);
+dl_error dl_manager_resume_device_fd(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    int *out_fd);
+dl_error dl_manager_pause_device_timeout(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    uint64_t timeout_milliseconds);
+size_t dl_manager_expire_device_pauses(
+    dl_manager *manager,
+    uint64_t monotonic_now_milliseconds);
 
 /*
  * A graceful pause must be acknowledged with complete_device_pause().

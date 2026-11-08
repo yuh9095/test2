@@ -1,12 +1,22 @@
+#define _POSIX_C_SOURCE 200809L
 #include "core/manager.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <time.h>
+#include <unistd.h>
 #include <string.h>
 
 typedef struct dl_device {
     uint32_t major_number;
     uint32_t minor_number;
     uint64_t generation;
+    char *devnode;
+    bool master_of_seat;
+    unsigned int capabilities;
     struct dl_device *next;
 } dl_device;
 
@@ -21,6 +31,8 @@ typedef struct dl_claim {
     uint32_t major_number;
     uint32_t minor_number;
     dl_device_pause_state pause_state;
+    int manager_fd;
+    uint64_t pause_deadline_ms;
     struct dl_claim *next;
 } dl_claim;
 
@@ -28,6 +40,7 @@ typedef struct dl_session {
     char *id;
     char *seat_id;
     uint32_t uid;
+    char *controller_id;
     dl_claim *claims;
     struct dl_session *next;
 } dl_session;
@@ -136,6 +149,9 @@ static void free_claims(dl_claim *claim)
 {
     while (claim != NULL) {
         dl_claim *next = claim->next;
+        if (claim->manager_fd >= 0) {
+            (void) close(claim->manager_fd);
+        }
         free(claim);
         claim = next;
     }
@@ -156,6 +172,9 @@ static void remove_claims_for_device(
             if (claim->major_number == major_number &&
                 claim->minor_number == minor_number) {
                 *cursor = claim->next;
+                if (claim->manager_fd >= 0) {
+                    (void) close(claim->manager_fd);
+                }
                 free(claim);
             } else {
                 cursor = &claim->next;
@@ -198,6 +217,7 @@ void dl_manager_destroy(dl_manager *manager)
 
         while (device != NULL) {
             dl_device *device_next = device->next;
+            free(device->devnode);
             free(device);
             device = device_next;
         }
@@ -213,6 +233,7 @@ void dl_manager_destroy(dl_manager *manager)
         free_claims(session->claims);
         free(session->id);
         free(session->seat_id);
+        free(session->controller_id);
         free(session);
         session = next;
     }
@@ -343,6 +364,7 @@ dl_error dl_manager_remove_device(
             device->minor_number == minor_number) {
             *cursor = device->next;
             remove_claims_for_device(manager, major_number, minor_number);
+            free(device->devnode);
             free(device);
             return DL_OK;
         }
@@ -522,6 +544,8 @@ dl_error dl_manager_claim_device(
     claim->major_number = major_number;
     claim->minor_number = minor_number;
     claim->pause_state = DL_DEVICE_ACTIVE;
+    claim->manager_fd = -1;
+    claim->pause_deadline_ms = 0U;
     claim->next = session->claims;
     session->claims = claim;
 
@@ -553,6 +577,9 @@ dl_error dl_manager_release_device(
         if (claim->major_number == major_number &&
             claim->minor_number == minor_number) {
             *cursor = claim->next;
+            if (claim->manager_fd >= 0) {
+                (void) close(claim->manager_fd);
+            }
             free(claim);
             return DL_OK;
         }
@@ -605,6 +632,11 @@ dl_error dl_manager_pause_device(
     }
 
     claim->pause_state = force ? DL_DEVICE_PAUSED : DL_DEVICE_PAUSE_PENDING;
+    claim->pause_deadline_ms = 0U;
+    if (force && claim->manager_fd >= 0) {
+        (void) close(claim->manager_fd);
+        claim->manager_fd = -1;
+    }
     return DL_OK;
 }
 
@@ -633,6 +665,11 @@ dl_error dl_manager_complete_device_pause(
     }
 
     claim->pause_state = DL_DEVICE_PAUSED;
+    claim->pause_deadline_ms = 0U;
+    if (claim->manager_fd >= 0) {
+        (void) close(claim->manager_fd);
+        claim->manager_fd = -1;
+    }
     return DL_OK;
 }
 
@@ -685,6 +722,351 @@ dl_device_pause_state dl_manager_get_device_pause_state(
     }
     claim = find_claim(session, major_number, minor_number);
     return claim == NULL ? DL_DEVICE_UNCLAIMED : claim->pause_state;
+}
+
+
+static uint64_t monotonic_milliseconds(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return 0U;
+    }
+    return (uint64_t) now.tv_sec * 1000U +
+        (uint64_t) now.tv_nsec / 1000000U;
+}
+
+static int open_verified_device(const dl_device *device)
+{
+    struct stat st;
+    int fd;
+
+    if (device == NULL || device->devnode == NULL) {
+        errno = ENODEV;
+        return -1;
+    }
+    fd = open(device->devnode, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        return -1;
+    }
+    if (fstat(fd, &st) != 0) {
+        int saved_errno = errno;
+        (void) close(fd);
+        errno = saved_errno;
+        return -1;
+    }
+    if (!S_ISCHR(st.st_mode) || major(st.st_rdev) != device->major_number ||
+        minor(st.st_rdev) != device->minor_number) {
+        (void) close(fd);
+        errno = ENODEV;
+        return -1;
+    }
+    return fd;
+}
+
+static int duplicate_cloexec(int fd)
+{
+    return fcntl(fd, F_DUPFD_CLOEXEC, 3);
+}
+
+dl_error dl_manager_register_device_node(
+    dl_manager *manager,
+    const char *seat_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    const char *devnode,
+    bool master_of_seat,
+    unsigned int capabilities,
+    uint64_t *out_generation)
+{
+    dl_error result;
+    dl_device *device;
+    char *path;
+
+    if (manager == NULL || seat_id == NULL || devnode == NULL ||
+        devnode[0] != '/' || out_generation == NULL ||
+        (capabilities & ~(unsigned int) (DL_DEVICE_CAP_TTY |
+            DL_DEVICE_CAP_GRAPHICAL | DL_DEVICE_CAP_VT)) != 0U) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    path = copy_string(devnode);
+    if (path == NULL) {
+        return DL_ERROR_NO_MEMORY;
+    }
+    result = dl_manager_add_device(
+        manager, seat_id, major_number, minor_number, out_generation);
+    if (result != DL_OK) {
+        free(path);
+        return result;
+    }
+    device = find_device(find_seat(manager, seat_id), major_number, minor_number);
+    device->devnode = path;
+    device->master_of_seat = master_of_seat;
+    device->capabilities = capabilities;
+    return DL_OK;
+}
+
+dl_error dl_manager_get_seat_capabilities(
+    const dl_manager *manager,
+    const char *seat_id,
+    dl_seat_capabilities *out_capabilities)
+{
+    const dl_seat *seat;
+    const dl_device *device;
+    if (manager == NULL || seat_id == NULL || out_capabilities == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    seat = find_seat(manager, seat_id);
+    if (seat == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    out_capabilities->has_tty = false;
+    out_capabilities->has_graphical = false;
+    out_capabilities->has_vt = false;
+    for (device = seat->devices; device != NULL; device = device->next) {
+        if (!device->master_of_seat) {
+            continue;
+        }
+        out_capabilities->has_tty |=
+            (device->capabilities & DL_DEVICE_CAP_TTY) != 0U;
+        out_capabilities->has_graphical |=
+            (device->capabilities & DL_DEVICE_CAP_GRAPHICAL) != 0U;
+        out_capabilities->has_vt |=
+            (device->capabilities & DL_DEVICE_CAP_VT) != 0U;
+    }
+    return DL_OK;
+}
+
+dl_error dl_manager_take_control(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id,
+    uint32_t caller_uid,
+    bool force)
+{
+    dl_session *session;
+    char *replacement;
+    if (manager == NULL || session_id == NULL || connection_id == NULL ||
+        session_id[0] == '\0' || connection_id[0] == '\0') {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (caller_uid != 0U && caller_uid != session->uid) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    if (session->controller_id != NULL) {
+        if (strcmp(session->controller_id, connection_id) == 0) {
+            return DL_ERROR_ALREADY_EXISTS;
+        }
+        if (!force || caller_uid != 0U) {
+            return DL_ERROR_BUSY;
+        }
+        free_claims(session->claims);
+        session->claims = NULL;
+    }
+    replacement = copy_string(connection_id);
+    if (replacement == NULL) {
+        return DL_ERROR_NO_MEMORY;
+    }
+    free(session->controller_id);
+    session->controller_id = replacement;
+    return DL_OK;
+}
+
+dl_error dl_manager_release_control(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id)
+{
+    dl_session *session;
+    if (manager == NULL || session_id == NULL || connection_id == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (session->controller_id == NULL ||
+        strcmp(session->controller_id, connection_id) != 0) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    free_claims(session->claims);
+    session->claims = NULL;
+    free(session->controller_id);
+    session->controller_id = NULL;
+    return DL_OK;
+}
+
+dl_error dl_manager_take_device_fd(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    int *out_fd,
+    bool *out_session_inactive)
+{
+    dl_session *session;
+    dl_device *device;
+    dl_claim *claim;
+    dl_error result;
+    int fd, client_fd;
+
+    if (manager == NULL || session_id == NULL || connection_id == NULL ||
+        out_fd == NULL || out_session_inactive == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    *out_fd = -1;
+    *out_session_inactive = false;
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (session->controller_id == NULL ||
+        strcmp(session->controller_id, connection_id) != 0) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    device = find_device(find_seat(manager, session->seat_id),
+        major_number, minor_number);
+    if (device == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (session_has_claim(session, major_number, minor_number)) {
+        return DL_ERROR_ALREADY_EXISTS;
+    }
+    fd = open_verified_device(device);
+    if (fd < 0) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    result = dl_manager_claim_device(
+        manager, session_id, major_number, minor_number, out_session_inactive);
+    if (result != DL_OK) {
+        (void) close(fd);
+        return result;
+    }
+    claim = find_claim(session, major_number, minor_number);
+    claim->manager_fd = fd;
+    client_fd = duplicate_cloexec(fd);
+    if (client_fd < 0) {
+        (void) dl_manager_release_device(
+            manager, session_id, major_number, minor_number);
+        return DL_ERROR_INVALID_STATE;
+    }
+    *out_fd = client_fd;
+    return DL_OK;
+}
+
+dl_error dl_manager_resume_device_fd(
+    dl_manager *manager,
+    const char *session_id,
+    const char *connection_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    int *out_fd)
+{
+    dl_session *session;
+    dl_claim *claim;
+    dl_device *device;
+    int fd, client_fd;
+
+    if (manager == NULL || session_id == NULL || connection_id == NULL ||
+        out_fd == NULL) {
+        return DL_ERROR_INVALID_ARGUMENT;
+    }
+    *out_fd = -1;
+    session = find_session(manager, session_id);
+    if (session == NULL) {
+        return DL_ERROR_NOT_FOUND;
+    }
+    if (session->controller_id == NULL ||
+        strcmp(session->controller_id, connection_id) != 0 ||
+        !dl_manager_session_is_active(manager, session_id)) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    claim = find_claim(session, major_number, minor_number);
+    device = find_device(find_seat(manager, session->seat_id),
+        major_number, minor_number);
+    if (claim == NULL || device == NULL ||
+        claim->pause_state != DL_DEVICE_PAUSED) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    fd = open_verified_device(device);
+    if (fd < 0) {
+        return DL_ERROR_INVALID_STATE;
+    }
+    client_fd = duplicate_cloexec(fd);
+    if (client_fd < 0) {
+        (void) close(fd);
+        return DL_ERROR_INVALID_STATE;
+    }
+    if (claim->manager_fd >= 0) {
+        (void) close(claim->manager_fd);
+    }
+    claim->manager_fd = fd;
+    claim->pause_state = DL_DEVICE_ACTIVE;
+    claim->pause_deadline_ms = 0U;
+    *out_fd = client_fd;
+    return DL_OK;
+}
+
+dl_error dl_manager_pause_device_timeout(
+    dl_manager *manager,
+    const char *session_id,
+    uint32_t major_number,
+    uint32_t minor_number,
+    uint64_t timeout_milliseconds)
+{
+    dl_error result;
+    dl_session *session;
+    dl_claim *claim;
+    uint64_t now;
+    if (timeout_milliseconds == 0U) {
+        return dl_manager_pause_device(
+            manager, session_id, major_number, minor_number, true);
+    }
+    now = monotonic_milliseconds();
+    if (now == 0U || UINT64_MAX - now < timeout_milliseconds) {
+        return DL_ERROR_LIMIT;
+    }
+    result = dl_manager_pause_device(
+        manager, session_id, major_number, minor_number, false);
+    if (result != DL_OK) {
+        return result;
+    }
+    session = find_session(manager, session_id);
+    claim = find_claim(session, major_number, minor_number);
+    claim->pause_deadline_ms = now + timeout_milliseconds;
+    return DL_OK;
+}
+
+size_t dl_manager_expire_device_pauses(
+    dl_manager *manager,
+    uint64_t monotonic_now_milliseconds)
+{
+    dl_session *session;
+    size_t expired = 0U;
+    if (manager == NULL || monotonic_now_milliseconds == 0U) {
+        return 0U;
+    }
+    for (session = manager->sessions; session != NULL; session = session->next) {
+        dl_claim *claim;
+        for (claim = session->claims; claim != NULL; claim = claim->next) {
+            if (claim->pause_state == DL_DEVICE_PAUSE_PENDING &&
+                claim->pause_deadline_ms != 0U &&
+                claim->pause_deadline_ms <= monotonic_now_milliseconds) {
+                claim->pause_state = DL_DEVICE_PAUSED;
+                claim->pause_deadline_ms = 0U;
+                if (claim->manager_fd >= 0) {
+                    (void) close(claim->manager_fd);
+                    claim->manager_fd = -1;
+                }
+                expired++;
+            }
+        }
+    }
+    return expired;
 }
 
 uint64_t dl_manager_device_generation(

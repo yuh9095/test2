@@ -74,3 +74,58 @@ jobs:
         run: meson compile -C build
       - name: Test
         run: meson test -C build --print-errorlogs --no-rebuild
+
+  coverage:
+    name: GCC coverage report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CC: gcc
+      CFLAGS: --coverage -O0 -g
+      LDFLAGS: --coverage
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc gcovr meson ninja-build pkg-config \
+            libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+      - name: Configure coverage build
+        run: meson setup build --buildtype=debug -Db_coverage=true
+      - name: Compile
+        run: meson compile -C build
+      - name: Run tests
+        run: meson test -C build --print-errorlogs --no-rebuild
+      - name: Generate coverage reports
+        run: |
+          gcovr --root . --filter 'src/' --xml-pretty -o coverage.xml
+          gcovr --root . --filter 'src/' --html-details -o coverage.html
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcc-coverage
+          path: |
+            coverage.xml
+            coverage.html
+            coverage.*.html
+
+  repeat-stress:
+    name: Repeated core and session stress tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc meson ninja-build pkg-config \
+            libudev-dev libpam0g-dev libsystemd-dev dbus-daemon
+      - name: Configure
+        run: meson setup build --buildtype=debug
+      - name: Compile
+        run: meson compile -C build
+      - name: Repeat state-model and session tests 50 times
+        run: |
+          meson test -C build --repeat=50 --print-errorlogs \
+            core-model session-registration session-socket
+

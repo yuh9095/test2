@@ -66,7 +66,7 @@ int main(void)
     const char *object_path_value=NULL;
     char object_path[256];
     int r;
-    assert(address!=NULL && address[0]!='\\0');
+    assert(address!=NULL && address[0] != 0);
     assert(dl_manager_create(&manager)==DL_OK);
     assert(dl_manager_add_seat(manager,"seat0")==DL_OK);
     assert(dl_manager_add_session(manager,"test-session",(uint32_t)getuid(),

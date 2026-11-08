@@ -26,6 +26,20 @@ core_dep = declare_dependency(
   include_directories: include_directories('src'),
 )
 
+session_registration_lib = static_library(
+  'dinit-logind-session-registration',
+  'src/session/registration.c',
+  dependencies: core_dep,
+  include_directories: include_directories('src'),
+  install: false,
+)
+
+session_registration_dep = declare_dependency(
+  link_with: session_registration_lib,
+  dependencies: core_dep,
+  include_directories: include_directories('src'),
+)
+
 linux_platform_lib = static_library(
   'dinit-logind-linux-platform',
   files(
@@ -72,6 +86,14 @@ test_exe = executable(
 )
 
 test('core-model', test_exe, timeout: 30)
+
+registration_test_exe = executable(
+  'test-session-registration',
+  'tests/test-session-registration.c',
+  dependencies: session_registration_dep,
+)
+
+test('session-registration', registration_test_exe, timeout: 30)
 
 platform_test_exe = executable(
   'test-linux-platform',

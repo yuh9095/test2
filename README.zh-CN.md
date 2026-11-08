@@ -4,7 +4,7 @@
 
 [English](README.md) | 简体中文
 
-> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev/eudev 设备集成，以及可由 Dinit 监督的前台守护进程。login1 D-Bus、Turnstile 会话创建、libseat FD 交接和完整 elogind API 兼容仍未完成。
+> **项目状态：早期开发阶段。** 仓库已有 C11 核心状态模型、Linux libudev/eudev 设备集成，以及可由 Dinit 监督的前台守护进程。login1 D-Bus、实际 Turnstile/PAM 注册传输、libseat FD 交接和完整 elogind API 兼容仍未完成。
 
 ## 构建与测试
 
@@ -44,11 +44,13 @@ meson test -C build --print-errorlogs
 
 ## 当前实现范围
 
-核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。 Session 支持可选 Seat，并保存 type/class、PAM service、desktop、TTY、display、leader PID 和 remote 标志，因此 SSH、无头及后台会话不必伪装成图形 Seat 会话。
+核心位于 `src/core/manager.c`，提供统一的进程内状态模型，管理 Seat、Session、设备、活动 Session 选择、设备身份 generation，以及每个 Session 对设备的逻辑占用。Session 支持可选 Seat，并保存 type/class、PAM service、desktop、TTY、display、leader PID 和 remote 标志，因此 SSH、无头及后台会话不必伪装成图形 Seat 会话。
 
 Linux 平台层通过 libudev 枚举设备并监听 eudev 热插拔事件。Seat 适配层应用调用者提供的策略，缓存 syspath 到 Seat 的映射以保证设备移除时能找到原记录，并将经过设备身份校验的字符设备节点注册到核心。前台 `dinit-logind` 守护进程目前接纳 `tty`、`drm` 和 `input` 子系统设备：优先使用明确的 `ID_SEAT` 属性；管理员也可以通过可选参数 `--default-seat ID`，将没有 `ID_SEAT` 的受支持设备分配给指定 Seat。不指定该参数时，不会擅自把未标记设备分配到 `seat0`。
 
-这目前实现的是设备发现和核心注册，还不是完整的 login1 服务或图形会话管理器。逻辑设备占用和现有设备 FD API 尚未连接到 D-Bus Unix FD 传递。
+核心 Session 查询接口提供按 leader PID 查找、Session 数量和按索引读取，供后续 login1 的 `GetSessionByPID` 与 `ListSessions` 等 D-Bus 方法复用。按 PID 查询目前只匹配 leader，不扫描进程树。
+
+新增的内部 Session 注册协议位于 `src/session/registration.c`。它定义固定长度、带版本号的 OPEN/CLOSE 消息，校验 Session ID、字段终止符、标志位和消息长度，并要求调用者先以可信 peer UID 通过授权检查。协议预期运行在 Unix `SOCK_SEQPACKET` 上，由特权 PAM/Turnstile 入口使用；生产传输层必须通过 `SO_PEERCRED` 获取真实对端 UID，并将允许的 UID 固定为 root。当前提交实现的是协议校验和核心状态操作，尚未实现 Socket 监听器、PAM 模块或 Turnstile hook。详细边界见 `docs/session-registration.zh-CN.md`。
 
 ## 计划中的内部模块
 
@@ -94,6 +96,3 @@ Linux 平台层通过 libudev 枚举设备并监听 eudev 热插拔事件。Seat
 已将上游 seatd/libseat 0.9.3 的 Linux 源码集放入 `third_party/seatd/`，并保留 MIT 许可证及固定版本来源记录，详见 `third_party/seatd/UPSTREAM.md`。源码包括 seatd 服务端、libseat 公共 API 与后端、Linux 设备和 VT 管理、上游测试、示例及手册。
 
 目前这是源码引入阶段：dinit-logind 根构建尚未编译或启动 vendored seatd，也不宣称已经完成运行时集成。vendored Meson 默认关闭 libseat 的 logind 后端，避免隐式引入 libsystemd/elogind 依赖。后续集成必须确保 Seat/Session 只有一个权威状态源。
-
-
-核心 Session 查询接口还提供按 leader PID 查找、Session 数量和按索引读取，供 login1 的 `GetSessionByPID` 与 `ListSessions` 等 D-Bus 方法复用。leader PID 在核心模型内唯一；PID 0 表示未提供 leader，不参与按 PID 查找。

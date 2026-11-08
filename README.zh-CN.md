@@ -86,3 +86,9 @@ meson test -C build --print-errorlogs
 ## 许可证
 
 项目许可证尚未确定。在完成许可证兼容性和署名要求审查前，不应将第三方源码复制到本仓库。
+
+## 已引入 seatd / libseat 源码
+
+已将上游 seatd/libseat 0.9.3 的 Linux 源码集放入 `third_party/seatd/`，并保留 MIT 许可证及固定版本来源记录，详见 `third_party/seatd/UPSTREAM.md`。源码包括 seatd 服务端、libseat 公共 API 与后端、Linux 设备和 VT 管理、上游测试、示例及手册。
+
+目前这是源码引入阶段：dinit-logind 根构建尚未编译或启动 vendored seatd，也不宣称已经完成运行时集成。vendored Meson 默认关闭 libseat 的 logind 后端，避免隐式引入 libsystemd/elogind 依赖。后续集成必须确保 Seat/Session 只有一个权威状态源。

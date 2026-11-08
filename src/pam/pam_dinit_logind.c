@@ -97,7 +97,8 @@ static int new_id(char out[65])
 PAM_EXTERN int pam_sm_open_session(pam_handle_t *p,int flags,int argc,const char **argv)
 {
     const char *path=socket_path(argc,argv),*user=NULL,*svc=NULL,*tty=NULL,*host=NULL;
-    const void *old=NULL; uid_t uid; dl_session_registration_request q;\n    dl_pam_session_state state = {{0}}; char *saved; int st;
+    const void *old=NULL; uid_t uid; dl_session_registration_request q;
+    dl_pam_session_state state = {{0}}; char *saved; int st;
     (void)flags;
     if(!path)return PAM_SESSION_ERR;
     if(pam_get_data(p,DATA_KEY,&old)==PAM_SUCCESS&&old)return PAM_SESSION_ERR;

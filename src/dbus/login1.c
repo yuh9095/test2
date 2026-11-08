@@ -1078,7 +1078,8 @@ int dl_login1_dispatch(dl_login1 *s)
 void dl_login1_close(dl_login1 *s)
 {
     if (!s) return;
-    s->owner_slot=sd_bus_slot_unref(s->owner_slot);\n    s->seat_slot=sd_bus_slot_unref(s->seat_slot);
+    s->owner_slot=sd_bus_slot_unref(s->owner_slot);
+    s->seat_slot=sd_bus_slot_unref(s->seat_slot);
     s->user_slot=sd_bus_slot_unref(s->user_slot);
     s->session_slot=sd_bus_slot_unref(s->session_slot);
     s->manager_slot=sd_bus_slot_unref(s->manager_slot);

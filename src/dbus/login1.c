@@ -391,6 +391,101 @@ static int prop_seat_capability(sd_bus *b,const char *p,const char *i,const char
 }
 
 
+static int prop_seat_sessions(sd_bus *b, const char *path,
+    const char *interface, const char *property, sd_bus_message *reply,
+    void *userdata, sd_bus_error *error)
+{
+    char seat_id[128];
+    size_t i, count;
+    int r;
+    (void)b; (void)interface; (void)property; (void)error;
+    if ((r = seat_lookup(path, userdata, seat_id, sizeof(seat_id))) < 0)
+        return r;
+    count = dl_manager_get_session_count(userdata);
+    if ((r = sd_bus_message_open_container(reply, 'a', "(so)")) < 0)
+        return r;
+    for (i = 0; i < count; i++) {
+        dl_session_properties p = {0};
+        char object[256];
+        if (dl_manager_get_session_at(userdata, i, &p) != DL_OK)
+            return -EIO;
+        if (p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0)
+            continue;
+        if ((r = make_path(SESSION_PATH, p.session_id, object,
+                sizeof(object))) < 0) return r;
+        if ((r = sd_bus_message_append(reply, "(so)", p.session_id,
+                object)) < 0) return r;
+    }
+    return sd_bus_message_close_container(reply);
+}
+
+static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
+    const char *seat_id, const char *session_id)
+{
+    const char *old_active = NULL;
+    char old_id[128] = "";
+    char seat_path[256], session_path[256];
+    int r;
+    if (dl_manager_get_active_session(manager, seat_id, &old_active) == DL_OK &&
+        old_active != NULL) {
+        if (snprintf(old_id, sizeof(old_id), "%s", old_active) >=
+            (int)sizeof(old_id)) return -ENAMETOOLONG;
+    }
+    r = dl_manager_set_active_session(manager, seat_id, session_id);
+    if (r != DL_OK) return -EINVAL;
+    if ((r = make_path(SEAT_PATH, seat_id, seat_path,
+            sizeof(seat_path))) < 0) return r;
+    if ((r = sd_bus_emit_properties_changed(bus, seat_path,
+            BUS_NAME ".Seat", "ActiveSession", NULL)) < 0) return r;
+    if (old_id[0] != '\0' && strcmp(old_id, session_id) != 0) {
+        if ((r = make_path(SESSION_PATH, old_id, session_path,
+                sizeof(session_path))) < 0) return r;
+        if ((r = sd_bus_emit_properties_changed(bus, session_path,
+                BUS_NAME ".Session", "Active", NULL)) < 0) return r;
+    }
+    if ((r = make_path(SESSION_PATH, session_id, session_path,
+            sizeof(session_path))) < 0) return r;
+    return sd_bus_emit_properties_changed(bus, session_path,
+        BUS_NAME ".Session", "Active", NULL);
+}
+
+static int method_seat_activate_session(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    char seat_id[128];
+    const char *session_id = NULL;
+    dl_session_properties p = {0};
+    sd_bus_creds *creds = NULL;
+    uid_t euid;
+    int r;
+    (void)error;
+    if ((r = seat_lookup(sd_bus_message_get_path(m), userdata, seat_id,
+            sizeof(seat_id))) < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "Seat does not exist");
+    if ((r = sd_bus_message_read(m, "s", &session_id)) < 0) return r;
+    if (dl_manager_get_session_properties(userdata, session_id, &p) != DL_OK ||
+        p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
+            "Session does not belong to this Seat");
+    if ((r = sd_bus_query_sender_creds(m, SD_BUS_CREDS_EUID, &creds)) < 0)
+        return r;
+    if ((r = sd_bus_creds_get_euid(creds, &euid)) < 0) {
+        sd_bus_creds_unref(creds);
+        return r;
+    }
+    sd_bus_creds_unref(creds);
+    if (euid != 0 && (uint32_t)euid != p.uid)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Only root or the Session owner may activate this Session");
+    r = activate_session_on_seat(sd_bus_message_get_bus(m), userdata,
+        seat_id, session_id);
+    if (r < 0) return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+        "Could not activate Session (%d)", r);
+    return sd_bus_reply_method_return(m, "");
+}
+
+
 static int auth_session(sd_bus_message *m,dl_manager *mgr,char *id,size_t cap,
  uint32_t *uid,const char **sender,sd_bus_creds **creds)
 {
@@ -409,9 +504,8 @@ static int method_activate(sd_bus_message*m,void*u,sd_bus_error*e)
  char id[128];uint32_t uid;const char*sender;sd_bus_creds*c=NULL;dl_session_properties p={0};int r;(void)e;(void)sender;
  r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c);if(r<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
  r=dl_manager_get_session_properties(u,id,&p);
- if(r==DL_OK&&p.seat_id)r=dl_manager_set_active_session(u,p.seat_id,id);else r=DL_ERROR_INVALID_STATE;
- sd_bus_creds_unref(c);if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"Activate failed");
- (void)sd_bus_emit_properties_changed(sd_bus_message_get_bus(m),sd_bus_message_get_path(m),BUS_NAME ".Session","Active",NULL);
+ if(r==DL_OK&&p.seat_id)r=activate_session_on_seat(sd_bus_message_get_bus(m),u,p.seat_id,id);else r=-EINVAL;
+ sd_bus_creds_unref(c);if(r<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"Activate failed (%d)",r);
  return sd_bus_reply_method_return(m,"");
 }
 static int method_lock_signal(sd_bus_message*m,void*u,bool lock)
@@ -564,6 +658,8 @@ static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_PROPERTY("ActiveSession","(so)",prop_seat_active,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_PROPERTY("CanTTY","b",prop_seat_capability,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_PROPERTY("CanGraphical","b",prop_seat_capability,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Sessions","a(so)",prop_seat_sessions,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_METHOD("ActivateSession","s","",method_seat_activate_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
 

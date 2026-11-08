@@ -94,6 +94,23 @@ static void call_not_supported(sd_bus *bus,const char *path,
     sd_bus_error_free(&error);
 }
 
+static void get_session_path(sd_bus *bus, const char *session_id,
+    char out_path[256])
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    const char *path = NULL;
+    int r = sd_bus_call_method(bus, "org.freedesktop.login1",
+        "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+        "GetSession", &error, &reply, "s", session_id);
+    assert(r >= 0);
+    assert(sd_bus_message_read(reply, "o", &path) >= 0);
+    assert(path != NULL);
+    assert(snprintf(out_path, 256U, "%s", path) > 0);
+    sd_bus_message_unref(reply);
+    sd_bus_error_free(&error);
+}
+
 int main(void)
 {
     const char *address=getenv("DBUS_SESSION_BUS_ADDRESS");
@@ -107,9 +124,10 @@ int main(void)
     const char *object_path_value=NULL;
     char object_path[256];
     int r;
-    pid_t kill_child;
+    pid_t kill_child, terminate_child, manager_terminate_child;
     dl_session_properties kill_properties = {0};
     dl_session_properties session_properties = {0};
+    dl_session_properties termination_properties = {0};
     assert(address!=NULL && address[0] != 0);
     assert(dl_manager_create(&manager)==DL_OK);
     assert(dl_manager_add_seat(manager,"seat0")==DL_OK);
@@ -121,6 +139,23 @@ int main(void)
     kill_properties.service = "test";
     assert(dl_manager_add_session_with_properties(manager,"kill-test",
         (uint32_t)getuid(),&kill_properties)==DL_OK);
+    terminate_child = fork();
+    assert(terminate_child >= 0);
+    if (terminate_child == 0) { for (;;) pause(); }
+    termination_properties.class_name = "user";
+    termination_properties.service = "test";
+    termination_properties.leader_pid = (uint32_t) terminate_child;
+    assert(dl_manager_add_session_with_properties(manager,"term-test",
+        (uint32_t)getuid(),&termination_properties)==DL_OK);
+    manager_terminate_child = fork();
+    assert(manager_terminate_child >= 0);
+    if (manager_terminate_child == 0) {
+        (void) signal(SIGTERM, SIG_IGN);
+        for (;;) pause();
+    }
+    termination_properties.leader_pid = (uint32_t) manager_terminate_child;
+    assert(dl_manager_add_session_with_properties(manager,"manager-term-test",
+        (uint32_t)getuid(),&termination_properties)==DL_OK);
     session_properties.seat_id = "seat0";
     session_properties.type = "tty";
     session_properties.class_name = "user";
@@ -229,11 +264,29 @@ int main(void)
             "org.freedesktop.login1.Manager","KillSession",
             SD_BUS_ERROR_INVALID_ARGS,"ssi","kill-test","leader",0);
     }
-    call_not_supported(client,object_path,
-        "org.freedesktop.login1.Session","Terminate","");
-    call_not_supported(client,"/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager","TerminateSession","s",
-        "test-session");
+    /* Session.Terminate sends SIGTERM immediately and completes without
+     * blocking the D-Bus dispatch thread. */
+    {
+        char terminate_path[256];
+        int status = 0;
+        get_session_path(client, "term-test", terminate_path);
+        call_ok(client, terminate_path, "org.freedesktop.login1.Session",
+            "Terminate", "");
+        assert(waitpid(terminate_child, &status, 0) == terminate_child);
+        assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
+    }
+
+    /* Manager.TerminateSession escalates to SIGKILL after the grace period
+     * when the registered Leader ignores SIGTERM. */
+    {
+        int status = 0;
+        call_ok(client, "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager", "TerminateSession", "s",
+            "manager-term-test");
+        assert(waitpid(manager_terminate_child, &status, 0) ==
+            manager_terminate_child);
+        assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+    }
 
     sd_bus_close_unref(client);
     atomic_store(&state.stopping,true);

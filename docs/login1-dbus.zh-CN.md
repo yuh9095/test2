@@ -11,7 +11,10 @@ Manager：
 - `GetUser()`、`GetUserByPID()`、`ListUsers()`；User 对象提供 `UID`、`Name`、`Sessions`。
 - `KillSession(id, who, signal)`：支持 `leader` 的 pidfd 安全信号发送；
   `all` 仅支持 SIGKILL，并要求登记 cgroup 路径可安全打开且 Leader 当前属于该 cgroup。
-- `TerminateSession()`：目前返回 NotSupported，尚未实现异步优雅终止流程。
+- `TerminateSession()`：通过 Leader pidfd 发送 SIGTERM，D-Bus 调用立即返回；
+  守护进程在 5 秒宽限期后升级为 SIGKILL。若 Session 登记了 cgroup v2 路径，
+  会先固定并验证 cgroup 目录及 Leader 成员关系，超时后优先写入该目录的
+  `cgroup.kill`；没有可用 cgroup 时仅强制结束已登记的 Leader。
 
 Session：
 - 属性：Id、User、Name、Seat、TTY、Display、Remote、Service、Desktop、
@@ -20,7 +23,7 @@ Session：
 - `Lock()`、`Unlock()`：向对应 Session 对象发出 Lock/Unlock 信号。
 - `Kill(who, signal)`：`leader` 通过 pidfd 发送指定有效信号；`all` 只允许
   SIGKILL，并使用 cgroup v2 的 `cgroup.kill`。
-- `Terminate()`：目前返回 NotSupported。
+- `Terminate()`：与 Manager.TerminateSession 使用相同的异步终止状态机。
 - `TakeControl(force)`、`ReleaseControl()`：以 D-Bus unique name 绑定控制权；
   校验调用者 UID，强制接管仅允许 root。
 - `TakeDevice(major,minor)`：由核心设备管理层打开并验证字符设备，返回 D-Bus Unix FD
@@ -42,8 +45,9 @@ User 对象路径。
 - **Kill all**：目前只实现 cgroup v2 的 SIGKILL 路径。cgroup 路径先通过逐组件
   `openat(O_NOFOLLOW)` 安全遍历，再检查 `cgroup.procs` 中存在 Leader PID，
   最后写入 `cgroup.kill`。路径元数据本身不被当作成员身份凭据。
-- **Terminate**：尚未实现 SIGTERM、异步宽限期、超时后 SIGKILL 的完整状态机；
-  因此 `Terminate()` 与 `TerminateSession()` 保持 NotSupported。
+- **Terminate**：已实现异步 SIGTERM、5 秒宽限期和超时 SIGKILL。cgroup v2
+  Session 会先固定并验证 cgroup 目录，超时后使用该目录的 `cgroup.kill`；
+  无 cgroup 的会话仅能保证强制结束已登记的 Leader，不能声称清理其所有后代进程。
 - **设备暂停通知**：核心有 pause state 与超时原语；D-Bus 控制器断连清理已实现，
   会释放该连接拥有的所有 claim 和管理 FD。但 seatd/libseat 的 pause/resume 回调
   尚未映射为 login1 的 PauseDevice/ResumeDevice 信号，客户端 FD 的恢复通知也未完成。

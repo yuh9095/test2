@@ -25,5 +25,8 @@ int dl_session_cgroup_kill_all(
     int cgroup_fd,
     uint32_t leader_pid,
     int leader_pidfd);
+/* Kill through a directory fd whose path and Leader membership were verified
+ * before an asynchronous termination request was accepted. */
+int dl_session_cgroup_kill_pinned(int cgroup_fd);
 
 #endif

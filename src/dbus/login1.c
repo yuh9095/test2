@@ -11,6 +11,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <limits.h>
+
+#define TERMINATION_GRACE_MS 5000U
+
+typedef struct dl_pending_termination {
+    char session_id[128];
+    int pidfd;
+    int cgroup_fd;
+    uint64_t deadline_ms;
+    struct dl_pending_termination *next;
+} dl_pending_termination;
 
 #define BUS_NAME "org.freedesktop.login1"
 #define ROOT_PATH "/org/freedesktop/login1"
@@ -19,6 +31,8 @@
 
 struct dl_login1 {
     sd_bus *bus;
+    dl_manager *manager;
+    dl_pending_termination *terminations;
     sd_bus_slot *owner_slot;
     sd_bus_slot *manager_slot;
     sd_bus_slot *session_slot;
@@ -908,8 +922,186 @@ static int method_manager_kill_session(sd_bus_message *m, void *userdata,
     return sd_bus_reply_method_return(m, "");
 }
 
-static int method_termination_unsupported(sd_bus_message*m,void*u,sd_bus_error*e)
-{(void)u;(void)e;return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_NOT_SUPPORTED,"Graceful asynchronous Session termination is not implemented");}
+static uint64_t termination_now_ms(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
+    return (uint64_t) now.tv_sec * 1000U +
+        (uint64_t) now.tv_nsec / 1000000U;
+}
+
+static void termination_free(dl_pending_termination *item)
+{
+    if (item == NULL) return;
+    if (item->pidfd >= 0) (void) close(item->pidfd);
+    if (item->cgroup_fd >= 0) (void) close(item->cgroup_fd);
+    free(item);
+}
+
+static int termination_schedule(dl_login1 *service, const char *session_id)
+{
+    dl_session_properties p = {0};
+    dl_pending_termination *item, **tail;
+    uint64_t now;
+    bool contains = false;
+    int root_fd = -1;
+
+    if (dl_manager_get_session_properties(service->manager, session_id, &p) != DL_OK) {
+        errno = ENOENT;
+        return -1;
+    }
+    for (item = service->terminations; item != NULL; item = item->next)
+        if (strcmp(item->session_id, session_id) == 0) return 0;
+
+    now = termination_now_ms();
+    if (now == 0U || UINT64_MAX - now < TERMINATION_GRACE_MS) {
+        errno = EIO;
+        return -1;
+    }
+    item = calloc(1U, sizeof(*item));
+    if (item == NULL) return -1;
+    item->pidfd = -1;
+    item->cgroup_fd = -1;
+    if (snprintf(item->session_id, sizeof(item->session_id), "%s",
+            session_id) >= (int) sizeof(item->session_id)) {
+        termination_free(item);
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    if (dl_manager_dup_session_pidfd(service->manager, session_id,
+            &item->pidfd) != DL_OK) {
+        termination_free(item);
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    /* Pin and validate the exact cgroup before signalling. A later cgroup
+     * rename or path replacement cannot redirect the delayed SIGKILL. */
+    if (p.cgroup_path != NULL && p.cgroup_path[0] != '\0') {
+        root_fd = open("/sys/fs/cgroup",
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (root_fd < 0) goto fail;
+        item->cgroup_fd = dl_session_cgroup_openat(root_fd, p.cgroup_path);
+        if (item->cgroup_fd < 0) goto fail;
+        if (dl_session_cgroup_contains_pid(item->cgroup_fd,
+                p.leader_pid, &contains) != 0) goto fail;
+        if (!contains) { errno = ESRCH; goto fail; }
+    }
+    if (dl_session_pidfd_send_signal(item->pidfd, SIGTERM) != 0) goto fail;
+    item->deadline_ms = now + TERMINATION_GRACE_MS;
+    tail = &service->terminations;
+    while (*tail != NULL) tail = &(*tail)->next;
+    *tail = item;
+    if (root_fd >= 0) (void) close(root_fd);
+    return 0;
+
+fail:
+    {
+        int saved_errno = errno;
+        if (root_fd >= 0) (void) close(root_fd);
+        termination_free(item);
+        errno = saved_errno;
+    }
+    return -1;
+}
+
+static void termination_dispatch(dl_login1 *service)
+{
+    uint64_t now = termination_now_ms();
+    dl_pending_termination **cursor = &service->terminations;
+    if (now == 0U) return;
+    while (*cursor != NULL) {
+        dl_pending_termination *item = *cursor;
+        if (item->deadline_ms > now) {
+            cursor = &item->next;
+            continue;
+        }
+        if (item->cgroup_fd >= 0) {
+            if (dl_session_cgroup_kill_pinned(item->cgroup_fd) != 0)
+                (void) dl_session_pidfd_send_signal(item->pidfd, SIGKILL);
+        } else {
+            (void) dl_session_pidfd_send_signal(item->pidfd, SIGKILL);
+        }
+        *cursor = item->next;
+        termination_free(item);
+    }
+}
+
+static int termination_error_reply(sd_bus_message *m, int error_number)
+{
+    if (error_number == EINVAL)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_INVALID_ARGS,
+            "Invalid Session termination request");
+    if (error_number == ENOENT || error_number == ESRCH)
+        return sd_bus_reply_method_errorf(m,
+            "org.freedesktop.login1.NoSuchSession",
+            "Session leader or cgroup membership no longer exists");
+    if (error_number == EACCES || error_number == EPERM)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Permission denied while terminating Session");
+    if (error_number == ENOTSUP || error_number == EOPNOTSUPP ||
+        error_number == ENOSYS)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
+            "Safe asynchronous termination is unavailable");
+    return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+        "Could not schedule Session termination (%d)", error_number);
+}
+
+static int method_session_terminate(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    char id[128];
+    uint32_t uid;
+    const char *sender;
+    sd_bus_creds *creds = NULL;
+    dl_login1 *service = sd_bus_get_userdata(sd_bus_message_get_bus(m));
+    int r;
+    (void) userdata;
+    (void) error;
+    if (service == NULL ||
+        auth_session(m, service->manager, id, sizeof(id), &uid,
+            &sender, &creds) < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Not authorized to terminate this Session");
+    (void) uid;
+    (void) sender;
+    r = termination_schedule(service, id);
+    sd_bus_creds_unref(creds);
+    if (r < 0) return termination_error_reply(m, errno);
+    return sd_bus_reply_method_return(m, "");
+}
+
+static int method_manager_terminate_session(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    const char *session_id = NULL;
+    dl_session_properties p = {0};
+    sd_bus_creds *creds = NULL;
+    dl_login1 *service = sd_bus_get_userdata(sd_bus_message_get_bus(m));
+    uid_t euid;
+    int r;
+    (void) userdata;
+    (void) error;
+    if (service == NULL)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+            "Session manager is unavailable");
+    if ((r = sd_bus_message_read(m, "s", &session_id)) < 0) return r;
+    if (dl_manager_get_session_properties(service->manager, session_id,
+            &p) != DL_OK)
+        return sd_bus_reply_method_errorf(m,
+            "org.freedesktop.login1.NoSuchSession", "Session does not exist");
+    if ((r = sd_bus_query_sender_creds(m, SD_BUS_CREDS_EUID, &creds)) < 0)
+        return r;
+    r = sd_bus_creds_get_euid(creds, &euid);
+    sd_bus_creds_unref(creds);
+    if (r < 0) return r;
+    if (euid != 0 && (uint32_t) euid != p.uid)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Only root or the Session owner may terminate this Session");
+    r = termination_schedule(service, session_id);
+    if (r < 0) return termination_error_reply(m, errno);
+    return sd_bus_reply_method_return(m, "");
+}
 static int user_path_uid(const char*p,uint32_t*uid)
 {
  const char*prefix=ROOT_PATH "/user/_";char*end=NULL;unsigned long v;
@@ -957,7 +1149,7 @@ static const sd_bus_vtable manager_vtable[] = {
     SD_BUS_METHOD("ListUsers","","a(uso)",list_users,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ListSeats","","a(so)",list_seats,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSeat","s","o",get_seat,SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("TerminateSession","s","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("TerminateSession","s","",method_manager_terminate_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("KillSession","ssi","",method_manager_kill_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
@@ -981,7 +1173,7 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_METHOD("Activate","","",method_activate,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Lock","","",method_lock,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Unlock","","",method_unlock,SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("Terminate","","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Terminate","","",method_session_terminate,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Kill","si","",method_session_kill,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("TakeControl","b","",method_take_control,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ReleaseControl","","",method_release_control,SD_BUS_VTABLE_UNPRIVILEGED),
@@ -1041,6 +1233,9 @@ static int login1_open_internal(dl_login1 **out, dl_manager *manager,
         if (r >= 0) r=sd_bus_start(s->bus);
     }
     if (r<0) goto fail;
+    s->manager = manager;
+    r = sd_bus_set_userdata(s->bus, s);
+    if (r < 0) goto fail;
     r=sd_bus_add_object_vtable(s->bus,&s->manager_slot,ROOT_PATH,
         BUS_NAME ".Manager",manager_vtable,manager); if (r<0) goto fail;
     r=sd_bus_add_fallback_vtable(s->bus,&s->session_slot,SESSION_PATH,
@@ -1070,15 +1265,37 @@ int dl_login1_get_fd(const dl_login1 *s)
 { return s && s->bus ? sd_bus_get_fd(s->bus) : -1; }
 short dl_login1_get_events(const dl_login1 *s)
 { int r; if (!s||!s->bus) return 0; r=sd_bus_get_events(s->bus); return r<0?0:(short)r; }
+int dl_login1_get_timeout_ms(const dl_login1 *s)
+{
+    const dl_pending_termination *item;
+    uint64_t now, nearest = UINT64_MAX, delta;
+    if (s == NULL || s->terminations == NULL) return -1;
+    now = termination_now_ms();
+    if (now == 0U) return 0;
+    for (item = s->terminations; item != NULL; item = item->next)
+        if (item->deadline_ms < nearest) nearest = item->deadline_ms;
+    if (nearest <= now) return 0;
+    delta = nearest - now;
+    return delta > (uint64_t) INT_MAX ? INT_MAX : (int) delta;
+}
+
 int dl_login1_dispatch(dl_login1 *s)
 {
-    int r; if (!s||!s->bus) return -EINVAL;
+    int r;
+    if (!s || !s->bus) return -EINVAL;
     do { r=sd_bus_process(s->bus,NULL); } while (r>0);
-    return r<0?r:0;
+    if (r < 0) return r;
+    termination_dispatch(s);
+    return 0;
 }
 void dl_login1_close(dl_login1 *s)
 {
+    dl_pending_termination *item;
     if (!s) return;
+    while ((item = s->terminations) != NULL) {
+        s->terminations = item->next;
+        termination_free(item);
+    }
     s->owner_slot=sd_bus_slot_unref(s->owner_slot);
     s->seat_slot=sd_bus_slot_unref(s->seat_slot);
     s->user_slot=sd_bus_slot_unref(s->user_slot);

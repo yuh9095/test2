@@ -253,6 +253,29 @@ static int pidfd_matches_pid(int pidfd, uint32_t expected_pid)
     return result;
 }
 
+int dl_session_cgroup_kill_pinned(int cgroup_fd)
+{
+    int fd;
+    ssize_t written;
+    if (cgroup_fd < 0) { errno = EBADF; return -1; }
+    fd = openat(cgroup_fd, "cgroup.kill",
+        O_WRONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        if (errno == ENOENT || errno == EROFS || errno == EACCES)
+            errno = ENOTSUP;
+        return -1;
+    }
+    do { written = write(fd, "1\\n", 2U); }
+    while (written < 0 && errno == EINTR);
+    if (written != 2) {
+        int saved_errno = written < 0 ? errno : EIO;
+        (void) close(fd);
+        errno = saved_errno;
+        return -1;
+    }
+    return close(fd);
+}
+
 int dl_session_cgroup_kill_all(
     int cgroup_fd,
     uint32_t leader_pid,

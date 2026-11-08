@@ -191,7 +191,8 @@ static int run_event_loop(
         for (index = 0U; index < descriptor_count; index++) {
             descriptors[index].revents = 0;
         }
-        result = poll(descriptors, descriptor_count, -1);
+        result = poll(descriptors, descriptor_count,
+            login1 == NULL ? -1 : dl_login1_get_timeout_ms(login1));
         if (result < 0) {
             if (errno == EINTR) {
                 continue;
@@ -236,11 +237,8 @@ static int run_event_loop(
                 return -1;
             }
         }
-        if (login1 != NULL) {
-            nfds_t bus_index = descriptor_count - 1U;
-            if ((descriptors[bus_index].revents & descriptors[bus_index].events) != 0 &&
-                dl_login1_dispatch(login1) < 0) return -1;
-        }
+        if (login1 != NULL && dl_login1_dispatch(login1) < 0)
+            return -1;
     }
 
     return 0;

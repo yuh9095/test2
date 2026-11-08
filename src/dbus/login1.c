@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define BUS_NAME "org.freedesktop.login1"
 #define ROOT_PATH "/org/freedesktop/login1"
@@ -17,6 +18,7 @@ struct dl_login1 {
     sd_bus_slot *manager_slot;
     sd_bus_slot *session_slot;
     sd_bus_slot *seat_slot;
+    sd_bus_slot *user_slot;
 };
 
 static int make_path(const char *prefix, const char *id, char *out, size_t cap)
@@ -297,6 +299,99 @@ static int prop_seat_capability(sd_bus *b,const char *p,const char *i,const char
     return sd_bus_message_append(m,"b",!strcmp(n,"CanTTY")?c.has_tty:c.has_graphical);
 }
 
+
+static int auth_session(sd_bus_message *m,dl_manager *mgr,char *id,size_t cap,
+ uint32_t *uid,const char **sender,sd_bus_creds **creds)
+{
+ dl_session_properties p={0}; uid_t euid; int r;
+ if(path_id(sd_bus_message_get_path(m),SESSION_PATH,id,cap)<0)return -ENOENT;
+ if(dl_manager_get_session_properties(mgr,id,&p)!=DL_OK)return -ENOENT;
+ *sender=sd_bus_message_get_sender(m); if(!*sender)return -EACCES;
+ r=sd_bus_query_sender_creds(m,SD_BUS_CREDS_EUID,creds); if(r<0)return r;
+ r=sd_bus_creds_get_euid(*creds,&euid); if(r<0){sd_bus_creds_unref(*creds);*creds=NULL;return r;}
+ *uid=(uint32_t)euid;
+ if(*uid!=0U&&*uid!=p.uid){sd_bus_creds_unref(*creds);*creds=NULL;return -EACCES;}
+ return 0;
+}
+static int method_activate(sd_bus_message*m,void*u,sd_bus_error*e)
+{
+ char id[128];uint32_t uid;const char*sender;sd_bus_creds*c=NULL;dl_session_properties p={0};int r;(void)e;(void)sender;
+ r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c);if(r<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ r=dl_manager_get_session_properties(u,id,&p);
+ if(r==DL_OK&&p.seat_id)r=dl_manager_set_active_session(u,p.seat_id,id);else r=DL_ERROR_INVALID_STATE;
+ sd_bus_creds_unref(c);if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"Activate failed");
+ (void)sd_bus_emit_properties_changed(sd_bus_message_get_bus(m),sd_bus_message_get_path(m),BUS_NAME ".Session","Active",NULL);
+ return sd_bus_reply_method_return(m,"");
+}
+static int method_lock_signal(sd_bus_message*m,void*u,bool lock)
+{
+ char id[128];uint32_t uid;const char*sender;sd_bus_creds*c=NULL;int r;
+ r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c);if(r<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ sd_bus_creds_unref(c);
+ r=sd_bus_emit_signal(sd_bus_message_get_bus(m),sd_bus_message_get_path(m),BUS_NAME ".Session",lock?"Lock":"Unlock","");
+ if(r<0)return r;return sd_bus_reply_method_return(m,"");
+}
+static int method_lock(sd_bus_message*m,void*u,sd_bus_error*e){(void)e;return method_lock_signal(m,u,true);}
+static int method_unlock(sd_bus_message*m,void*u,sd_bus_error*e){(void)e;return method_lock_signal(m,u,false);}
+static int method_take_control(sd_bus_message*m,void*u,sd_bus_error*e)
+{
+ char id[128];uint32_t uid;const char*sender;sd_bus_creds*c=NULL;int force,r;(void)e;
+ if((r=sd_bus_message_read(m,"b",&force))<0)return r;
+ if((r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c))<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ r=dl_manager_take_control(u,id,sender,uid,force!=0);sd_bus_creds_unref(c);
+ if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"TakeControl failed (%d)",r);
+ return sd_bus_reply_method_return(m,"");
+}
+static int method_release_control(sd_bus_message*m,void*u,sd_bus_error*e)
+{
+ char id[128];uint32_t uid;const char*sender;sd_bus_creds*c=NULL;int r;(void)e;
+ if((r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c))<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ r=dl_manager_release_control(u,id,sender);sd_bus_creds_unref(c);
+ if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"ReleaseControl failed (%d)",r);
+ return sd_bus_reply_method_return(m,"");
+}
+static int method_take_device(sd_bus_message*m,void*u,sd_bus_error*e)
+{
+ char id[128];uint32_t uid,maj,min;const char*sender;sd_bus_creds*c=NULL;int fd=-1,r;bool inactive=false;(void)e;
+ if((r=sd_bus_message_read(m,"uu",&maj,&min))<0)return r;
+ if((r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c))<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ r=dl_manager_take_device_fd(u,id,sender,maj,min,&fd,&inactive);sd_bus_creds_unref(c);
+ if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"TakeDevice failed (%d)",r);
+ r=sd_bus_reply_method_return(m,"hb",fd,inactive);(void)close(fd);return r;
+}
+static int method_release_device(sd_bus_message*m,void*u,sd_bus_error*e)
+{
+ char id[128];uint32_t uid,maj,min;const char*sender;sd_bus_creds*c=NULL;int r;(void)e;
+ if((r=sd_bus_message_read(m,"uu",&maj,&min))<0)return r;
+ if((r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c))<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ r=dl_manager_session_is_controller(u,id,sender);
+ if(r==DL_OK)r=dl_manager_release_device(u,id,maj,min);
+ sd_bus_creds_unref(c);if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"ReleaseDevice failed (%d)",r);
+ return sd_bus_reply_method_return(m,"");
+}
+static int method_pause_complete(sd_bus_message*m,void*u,sd_bus_error*e)
+{
+ char id[128];uint32_t uid,maj,min;const char*sender;sd_bus_creds*c=NULL;int r;(void)e;
+ if((r=sd_bus_message_read(m,"uu",&maj,&min))<0)return r;
+ if((r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c))<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ r=dl_manager_session_is_controller(u,id,sender);
+ if(r==DL_OK)r=dl_manager_complete_device_pause(u,id,maj,min);
+ sd_bus_creds_unref(c);if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"PauseDeviceComplete failed (%d)",r);
+ return sd_bus_reply_method_return(m,"");
+}
+static int method_termination_unsupported(sd_bus_message*m,void*u,sd_bus_error*e)
+{(void)u;(void)e;return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_NOT_SUPPORTED,"Session-wide process membership tracking is not implemented");}
+static int user_path_uid(const char*p,uint32_t*uid)
+{
+ const char*prefix=ROOT_PATH "/user/_";char*end=NULL;unsigned long v;
+ if(strncmp(p,prefix,strlen(prefix))||!p[strlen(prefix)]||strchr(p+strlen(prefix),'/'))return -EINVAL;
+ v=strtoul(p+strlen(prefix),&end,10);if(!end||*end||v>UINT32_MAX)return -EINVAL;*uid=(uint32_t)v;return 0;
+}
+static int prop_user_uid(sd_bus*b,const char*p,const char*i,const char*n,sd_bus_message*m,void*u,sd_bus_error*e)
+{uint32_t uid;(void)b;(void)i;(void)n;(void)u;(void)e;if(user_path_uid(p,&uid)<0)return -ENOENT;return sd_bus_message_append(m,"u",uid);}
+static int prop_user_name(sd_bus*b,const char*p,const char*i,const char*n,sd_bus_message*m,void*u,sd_bus_error*e)
+{uint32_t uid;char buf[16384];int r;(void)b;(void)i;(void)n;(void)u;(void)e;if(user_path_uid(p,&uid)<0)return -ENOENT;if((r=user_name(uid,buf,sizeof(buf)))<0)return r;return sd_bus_message_append(m,"s",buf);}
+
 static const sd_bus_vtable manager_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_METHOD("ListSessions","","a(susso)",list_sessions,SD_BUS_VTABLE_UNPRIVILEGED),
@@ -304,6 +399,8 @@ static const sd_bus_vtable manager_vtable[] = {
     SD_BUS_METHOD("GetSessionByPID","u","o",get_session_pid,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ListSeats","","a(so)",list_seats,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSeat","s","o",get_seat,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("TerminateSession","s","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("KillSession","ssi","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
 static const sd_bus_vtable session_vtable[] = {
@@ -321,9 +418,19 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_PROPERTY("Type","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Class","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Active","b",prop_session_bool,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_METHOD("Activate","","",method_activate,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Lock","","",method_lock,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Unlock","","",method_unlock,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Terminate","","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Kill","si","",method_termination_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("TakeControl","b","",method_take_control,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("ReleaseControl","","",method_release_control,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("TakeDevice","uu","hb",method_take_device,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("ReleaseDevice","uu","",method_release_device,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("PauseDeviceComplete","uu","",method_pause_complete,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
-static const sd_bus_vtable seat_vtable[] = {
+static const sd_bus_vtable user_vtable[] = {\n SD_BUS_VTABLE_START(0),\n SD_BUS_PROPERTY("UID","u",prop_user_uid,0,SD_BUS_VTABLE_PROPERTY_CONST),\n SD_BUS_PROPERTY("Name","s",prop_user_name,0,SD_BUS_VTABLE_PROPERTY_CONST),\n SD_BUS_VTABLE_END\n};\nstatic const sd_bus_vtable seat_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_PROPERTY("Id","s",prop_seat_id,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("ActiveSession","(so)",prop_seat_active,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
@@ -343,7 +450,7 @@ int dl_login1_open(dl_login1 **out, dl_manager *manager)
         BUS_NAME ".Manager",manager_vtable,manager); if (r<0) goto fail;
     r=sd_bus_add_fallback_vtable(s->bus,&s->session_slot,SESSION_PATH,
         BUS_NAME ".Session",session_vtable,NULL,manager); if (r<0) goto fail;
-    r=sd_bus_add_fallback_vtable(s->bus,&s->seat_slot,SEAT_PATH,
+    r=sd_bus_add_fallback_vtable(s->bus,&s->user_slot,ROOT_PATH "/user",BUS_NAME ".User",user_vtable,NULL,manager); if(r<0) goto fail;\n    r=sd_bus_add_fallback_vtable(s->bus,&s->seat_slot,SEAT_PATH,
         BUS_NAME ".Seat",seat_vtable,NULL,manager); if (r<0) goto fail;
     r=sd_bus_request_name(s->bus,BUS_NAME,0); if (r<0) goto fail;
     *out=s; return 0;
@@ -363,7 +470,7 @@ int dl_login1_dispatch(dl_login1 *s)
 void dl_login1_close(dl_login1 *s)
 {
     if (!s) return;
-    s->seat_slot=sd_bus_slot_unref(s->seat_slot);
+    s->seat_slot=sd_bus_slot_unref(s->seat_slot);\n    s->user_slot=sd_bus_slot_unref(s->user_slot);
     s->session_slot=sd_bus_slot_unref(s->session_slot);
     s->manager_slot=sd_bus_slot_unref(s->manager_slot);
     s->bus=sd_bus_flush_close_unref(s->bus);

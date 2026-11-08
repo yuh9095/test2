@@ -168,6 +168,7 @@ dl_error dl_manager_take_control(
     const char *connection_id,
     uint32_t caller_uid,
     bool force);
+dl_error dl_manager_session_is_controller(const dl_manager *, const char *, const char *);
 dl_error dl_manager_release_control(
     dl_manager *manager,
     const char *session_id,

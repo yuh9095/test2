@@ -1123,6 +1123,14 @@ dl_error dl_manager_take_control(
     return DL_OK;
 }
 
+dl_error dl_manager_session_is_controller(const dl_manager *manager, const char *session_id, const char *connection_id)
+{
+ const dl_session *session;
+ if (!manager || !session_id || !connection_id) return DL_ERROR_INVALID_ARGUMENT;
+ session=find_session(manager,session_id);
+ if (!session) return DL_ERROR_NOT_FOUND;
+ return session->controller_id && strcmp(session->controller_id,connection_id)==0 ? DL_OK : DL_ERROR_INVALID_STATE;
+}
 dl_error dl_manager_release_control(
     dl_manager *manager,
     const char *session_id,

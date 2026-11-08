@@ -236,8 +236,10 @@ jobs:
       - uses: actions/checkout@v4
         if: matrix.family != 'alpine' && matrix.family != 'chimera'
 
-      - name: Checkout source in Alpine ARM64 container
-        if: matrix.family == 'alpine' && matrix.arch == 'aarch64'
+      # Alpine containers do not inherit the runner's checkout volume
+      # contents reliably; clone inside every Alpine architecture container.
+      - name: Checkout source in Alpine container
+        if: matrix.family == 'alpine'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |

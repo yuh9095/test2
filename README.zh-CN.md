@@ -2,7 +2,7 @@
 
 登录、Session、Seat 与设备管理服务，面向使用 Dinit 的 Linux 系统。
 
-> 项目处于早期开发阶段。已有 C11 核心、libudev/eudev 设备发现、特权 Session 注册协议、部分 login1 D-Bus、pidfd Leader 信号发送、cgroup v2 安全终止及异步 Terminate（5 秒宽限期）。设备 pause/resume 信号、完整 Turnstile 生命周期、inhibitor、电源管理和 elogind API 兼容仍未完成。
+> 项目处于早期开发阶段。已有 C11 核心、libudev/eudev 设备发现、特权 Session 注册协议、部分 login1 D-Bus、pidfd Leader 信号发送、cgroup v2 安全终止，以及 Session/Manager/Seat 的异步 Terminate（5 秒宽限期）。设备 pause/resume 信号与 FD 恢复交接、完整 Turnstile 生命周期、inhibitor、电源管理和完整 elogind API 兼容仍未完成。
 
 ## 构建
 
@@ -26,7 +26,7 @@ session required pam_dinit_logind.so socket=/run/dinit-logind/session.sock
 
 ## login1 D-Bus 服务端
 
-当前提供 login1 Manager、Session、Seat、User 的查询和部分操作。支持 pidfd 安全的 `Kill(leader, signal)`、经过 cgroup v2 成员核验的 `Kill(all, SIGKILL)`，以及异步 `Terminate()` / `TerminateSession()`（SIGTERM、5 秒宽限期、超时 SIGKILL；无 cgroup 时仅能保证终止登记的 Leader）。接口范围见 [login1 D-Bus 文档](docs/login1-dbus.zh-CN.md)。构建需要 `libsystemd` 的 `sd-bus` 开发库，但不依赖 systemd PID 1 或 systemd-logind。
+当前提供 login1 Manager、Session、Seat、User 的查询和部分操作。支持 pidfd 安全的 `Kill(leader, signal)`、经过 cgroup v2 成员核验的 `Kill(all, SIGKILL)`，以及异步 `Terminate()` / `TerminateSession()`（SIGTERM、5 秒宽限期、超时 SIGKILL；无 cgroup 时仅能保证终止登记的 Leader）。root-only `Seat.Terminate()` 也已实现：只对该 Seat 的 Session 安排相同的异步终止流程；多个 Session 的安排不是事务，若中途失败，已安排的终止不会回滚。接口范围见 [login1 D-Bus 文档](docs/login1-dbus.zh-CN.md)。构建需要 `libsystemd` 的 `sd-bus` 开发库，但不依赖 systemd PID 1 或 systemd-logind。
 
 ## Session 注册与 cgroup 元数据
 

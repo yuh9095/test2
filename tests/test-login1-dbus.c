@@ -63,7 +63,8 @@ int main(void)
     service_state state={0};
     sd_bus_error error=SD_BUS_ERROR_NULL;
     sd_bus_message *reply=NULL;
-    const char *object_path=NULL;
+    const char *object_path_value=NULL;
+    char object_path[256];
     int r;
     assert(address!=NULL && address[0]!='\\0');
     assert(dl_manager_create(&manager)==DL_OK);
@@ -83,8 +84,9 @@ int main(void)
         "/org/freedesktop/login1","org.freedesktop.login1.Manager",
         "GetSession",&error,&reply,"s","test-session");
     assert(r>=0);
-    assert(sd_bus_message_read(reply,"o",&object_path)>=0);
-    assert(object_path!=NULL);
+    assert(sd_bus_message_read(reply,"o",&object_path_value)>=0);
+    assert(object_path_value!=NULL);
+    assert(snprintf(object_path,sizeof(object_path),"%s",object_path_value)>0);
     sd_bus_message_unref(reply);
     reply=NULL;
 

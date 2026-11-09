@@ -1,6 +1,6 @@
 # Seat 子系统架构（初始设计）
 
-状态：架构基线，尚未开始实现。本文件描述设计，不代表功能已经可用。
+状态：架构基线与实现方向。核心模型、udev、VT、login1 Session/Seat 和部分设备 FD 生命周期已实现；完整激活状态机、ResumeDevice 定向 FD 交接及完整 libseat 自动发现仍在推进。
 
 ## 1. 目标
 
@@ -209,10 +209,11 @@ DroidSpaces 首轮验证要分别测试 Headless Seat 和 XFCE4/X11 路径。容
 - 实现活动 Session 转换和 pause/resume 状态机。
 - 在严格能力边界内加入 VTManager 能力探测和 VT 操作。
 
-### Seat D 阶段：login1 兼容
-- 导出 Manager 和 Seat 对象、属性及方法。
-- 实现客户端需要的 Session 设备方法和信号。
-- 增加 D-Bus 集成测试：introspection、签名、错误、FD passing 和激活。
+### Seat D 阶段：login1 兼容（已完成基础子集，继续扩展）
+- 已导出 Manager、Seat、Session、User 对象及当前实现的属性/方法。
+- 已实现 TakeControl/ReleaseControl、TakeDevice/ReleaseDevice、PauseDeviceComplete、SetType、PauseDevice pause/force/gone、D-Bus FD passing 和活动 Session 属性通知。
+- 私有 D-Bus 集成测试已覆盖设备 FD、pause acknowledgement、force timeout、gone 和恢复后重新 TakeDevice。
+- 仍需补齐 ResumeDevice 定向 FD 信号、完整 introspection/属性兼容矩阵，以及更多真实 libseat 客户端测试。
 
 ### Seat E 阶段：客户端验证
 - 验证 libseat logind 后端。

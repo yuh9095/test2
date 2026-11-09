@@ -67,10 +67,11 @@ User 对象路径。
 
 构建系统在检测到 `dbus-run-session` 时注册
 `login1-private-dbus-integration`。测试使用临时会话总线，不占用宿主机系统总线，
-也不要求 systemd 或 systemd-logind。测试覆盖 Manager/Session 查询、用户查询、
-Seat/Session 激活、Lock/Unlock、TakeControl/ReleaseControl，以及真实 pidfd Leader
-信号发送与非法 Kill 参数。物理 VT、真实图形设备 FD、pause/resume 和完整桌面客户端
-行为仍需在具有相应硬件与 seatd/libseat 环境的系统中验证。
+也不要求 systemd 或 systemd-logind。测试覆盖 Manager/Session 查询、用户查询、Seat/Session 激活、Lock/Unlock、SetType、
+TakeControl/ReleaseControl、/dev/null 与 /dev/zero 的 D-Bus Unix FD passing、PauseDevice
+pause/force/gone、PauseDeviceComplete、超时清理、恢复后重新 TakeDevice，以及 pidfd
+Leader 信号发送和非法 Kill 参数。真实 DRM/input 设备、物理 VT 和完整桌面客户端行为仍需
+在具有相应硬件与 seatd/libseat 环境的系统中验证。
 
 默认生产入口连接系统总线并取得 `org.freedesktop.login1` 名称；
 `--no-login1` 可用于不启动 D-Bus 的核心/设备适配器调试。

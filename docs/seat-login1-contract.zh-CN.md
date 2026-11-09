@@ -1,6 +1,6 @@
 # login1 Seat / Session 设备接口契约（systemd 262 基线）
 
-状态：接口审计记录，供后续实现和测试使用；不是已实现功能声明。
+状态：协议目标与实现对照记录。下文标明当前已实现行为和仍未实现的兼容要求；规范要求不等于代码已具备该能力。
 
 参考基线：systemd 262 的 `org.freedesktop.login1` D-Bus 文档，以及 libseat logind backend 当前源码。实现时必须将方法签名、信号顺序和 FD 语义作为兼容要求，而不能只实现同名空方法。
 
@@ -58,13 +58,14 @@
 | `TakeDevice` | `u,u -> h,b` | 输入 major/minor，返回 FD 和 inactive 标志 |
 | `ReleaseDevice` | `u,u -> ()` | 释放指定设备 |
 | `PauseDeviceComplete` | `u,u -> ()` | 确认已完成 pause 请求 |
+| `SetType` | `s -> ()` | 更新 Session Type（已实现） |
 
 相关信号：
 
 | 信号 | 精确签名 | 语义 |
 |---|---|---|
 | `PauseDevice` | `u,u,s` | 设备暂停/移除通知 |
-| `ResumeDevice` | `u,u,h` | 设备恢复，并传递新的 FD |
+| `ResumeDevice` | `u,u,h` | systemd login1 的恢复 FD 信号；本项目尚未实现此信号 |
 
 `TakeDevice` 只允许 Session 当前控制器调用。D-Bus 调用者的有效 UID 必须是该 Session 所属用户 UID 或 root。设备必须属于 Session 所属 Seat。设备不能在同一 Session 中重复取得，直到原授权被释放。
 
@@ -76,7 +77,7 @@
 - `force`：访问已经被服务端强制暂停，是异步通知；客户端不需要调用 PauseDeviceComplete。
 - `gone`：设备已经移除。客户端不应再等待该设备的 ResumeDevice，也无需再调用 ReleaseDevice；若同 major/minor 的新设备加入，可重新 TakeDevice。
 
-服务端发送信号时，必须只发送给该 Session 当前控制器。
+当前实现对 `pause`、`force`、`gone` 发出 Session `PauseDevice` 信号；控制器断连会清理 claim。信号目标目前是该 Session 对象的总线广播，而非按 unique name 定向。完整协议应进一步验证并收紧到当前控制器。
 
 ## 4. FD 生命周期
 
@@ -94,7 +95,7 @@
 
 - `PauseDevice` 发送时机必须先于 Session `Active` 属性变化通知。
 - `ResumeDevice` 发送时机必须在 Session `Active` 属性变化之后。
-- ResumeDevice 必须传递新打开的 FD。客户端应切换到新 FD 并关闭旧 FD，不能假定底层内核 open-file-description 一定相同。
+- 目标兼容协议中的 ResumeDevice 必须传递新打开的 FD。当前实现不发送 ResumeDevice；Session Active=true 后，libseat logind backend 可重新调用 TakeDevice 获取新 FD。
 - Session 即使 Active=true，设备仍可能因其他原因保持 paused；Active 不能直接等同于每个 DeviceGrant 都 active。
 - 设备被移除时发出 `gone`，清除设备授权和等待状态。
 
@@ -186,7 +187,7 @@ libseat logind backend 依赖 login1 Session 的控制器和设备生命周期�
 5. 对 `pause` 请求停用 Seat，并调用 PauseDeviceComplete。
 6. 对 `force` 请求停用 Seat，不等待确认。
 7. 对 `gone` 通知客户端设备已经消失。
-8. Active 状态恢复后重新启用 Seat；由 login1 的 ResumeDevice FD 更新设备句柄。
+8. Active 状态恢复后重新启用 Seat；当前 libseat logind backend 会重新调用 TakeDevice 获取新的设备 FD。
 
 因此，首阶段应优先实现 login1 兼容，不需要同时实现 seatd 私有协议。
 
@@ -229,3 +230,12 @@ libseat logind backend 依赖 login1 Session 的控制器和设备生命周期�
 ## Seat.Terminate 实现说明
 
 仅 root 可以调用。服务端会为该 Seat 上每个已登记 Session 安排与 Session.Terminate 相同的 pidfd SIGTERM、5 秒宽限期和 SIGKILL 升级。若某个 Session 无法安全安排，调用返回错误；该操作不是事务，先前已安排的 Session 不会自动回滚。集成测试使用独立 Seat 和子进程验证目标范围与权限边界。
+
+
+## 12. 当前代码实现状态（2026-11-09）
+
+- 已实现：TakeControl/ReleaseControl、TakeDevice/ReleaseDevice、PauseDeviceComplete、SetType、D-Bus Unix FD 传递、pause/force/gone 通知、暂停超时、重新激活后的 TakeDevice FD 恢复、控制器断连清理。
+- 已实现：Seat 活动 Session 切换时请求旧 Session 暂停设备；设备移除前通知持有者。
+- 尚未实现：ResumeDevice(u,u,h) 定向 FD 信号、按控制器 unique name 定向发送 PauseDevice、对客户端已复制设备 FD 的内核级强制撤销。
+- 尚未实现：完整 libseat 自动 Session 发现。vendored libseat logind backend 仍依赖 sd-login 的 session/seat 元数据读取；本项目尚未提供 systemd 兼容 session runtime files 或 libsystemd 兼容层。
+- 已有私有 D-Bus 测试覆盖 /dev/null 与 /dev/zero 的 FD passing、pause/ack、force timeout、gone 清理和 TakeDevice 恢复；真实 DRM/input/VT 设备仍需硬件测试。

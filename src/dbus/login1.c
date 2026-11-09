@@ -1289,7 +1289,7 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_PROPERTY("Leader","u",prop_session_leader,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("CGroup","s",prop_session_cgroup,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("VTNr","u",prop_session_vtnr,0,SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Type","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("Type","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_PROPERTY("Class","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Active","b",prop_session_bool,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_METHOD("Activate","","",method_activate,SD_BUS_VTABLE_UNPRIVILEGED),

@@ -692,6 +692,23 @@ dl_error dl_manager_dup_session_pidfd(
     return DL_OK;
 }
 
+dl_error dl_manager_set_session_type(
+    dl_manager *manager, const char *session_id, const char *type)
+{
+    dl_session *session;
+    char *replacement;
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0' ||
+        type == NULL || type[0] == '\0')
+        return DL_ERROR_INVALID_ARGUMENT;
+    session = find_session(manager, session_id);
+    if (session == NULL) return DL_ERROR_NOT_FOUND;
+    replacement = copy_string(type);
+    if (replacement == NULL) return DL_ERROR_NO_MEMORY;
+    free(session->type);
+    session->type = replacement;
+    return DL_OK;
+}
+
 dl_error dl_manager_find_session_by_leader_pid(
     const dl_manager *manager,
     uint32_t leader_pid,
@@ -1071,6 +1088,64 @@ dl_device_pause_state dl_manager_get_device_pause_state(
     return claim == NULL ? DL_DEVICE_UNCLAIMED : claim->pause_state;
 }
 
+
+size_t dl_manager_get_session_device_claim_count(
+    const dl_manager *manager, const char *session_id)
+{
+    const dl_session *session;
+    const dl_claim *claim;
+    size_t count = 0U;
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0')
+        return 0U;
+    session = find_session(manager, session_id);
+    if (session == NULL) return 0U;
+    for (claim = session->claims; claim != NULL; claim = claim->next) {
+        if (count == SIZE_MAX) return SIZE_MAX;
+        count++;
+    }
+    return count;
+}
+
+dl_error dl_manager_get_session_device_claim_at(
+    const dl_manager *manager, const char *session_id, size_t index,
+    dl_device_claim_properties *out_properties)
+{
+    const dl_session *session;
+    const dl_claim *claim;
+    size_t current = 0U;
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0' ||
+        out_properties == NULL)
+        return DL_ERROR_INVALID_ARGUMENT;
+    session = find_session(manager, session_id);
+    if (session == NULL) return DL_ERROR_NOT_FOUND;
+    for (claim = session->claims; claim != NULL; claim = claim->next) {
+        if (current++ == index) {
+            out_properties->major_number = claim->major_number;
+            out_properties->minor_number = claim->minor_number;
+            out_properties->pause_state = claim->pause_state;
+            return DL_OK;
+        }
+    }
+    return DL_ERROR_NOT_FOUND;
+}
+
+uint64_t dl_manager_get_next_device_pause_deadline(
+    const dl_manager *manager)
+{
+    const dl_session *session;
+    uint64_t nearest = 0U;
+    if (manager == NULL) return 0U;
+    for (session = manager->sessions; session != NULL; session = session->next) {
+        const dl_claim *claim;
+        for (claim = session->claims; claim != NULL; claim = claim->next) {
+            if (claim->pause_state == DL_DEVICE_PAUSE_PENDING &&
+                claim->pause_deadline_ms != 0U &&
+                (nearest == 0U || claim->pause_deadline_ms < nearest))
+                nearest = claim->pause_deadline_ms;
+        }
+    }
+    return nearest;
+}
 
 static uint64_t monotonic_milliseconds(void)
 {

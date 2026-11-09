@@ -31,6 +31,12 @@ typedef enum dl_device_pause_state {
     DL_DEVICE_PAUSED
 } dl_device_pause_state;
 
+typedef struct dl_device_claim_properties {
+    uint32_t major_number;
+    uint32_t minor_number;
+    dl_device_pause_state pause_state;
+} dl_device_claim_properties;
+
 typedef enum dl_error {
     DL_OK = 0,
     DL_ERROR_INVALID_ARGUMENT,
@@ -129,6 +135,9 @@ dl_error dl_manager_get_session_properties(
     const dl_manager *manager,
     const char *session_id,
     dl_session_properties *out_properties);
+/* Update the mutable login1 Type property (for libseat/logind clients). */
+dl_error dl_manager_set_session_type(
+    dl_manager *manager, const char *session_id, const char *type);
 /* Matches the registered Session leader only; PID 0 is invalid. */
 dl_error dl_manager_find_session_by_leader_pid(
     const dl_manager *manager,
@@ -240,6 +249,14 @@ dl_device_pause_state dl_manager_get_device_pause_state(
     const char *session_id,
     uint32_t major_number,
     uint32_t minor_number);
+size_t dl_manager_get_session_device_claim_count(
+    const dl_manager *manager, const char *session_id);
+dl_error dl_manager_get_session_device_claim_at(
+    const dl_manager *manager, const char *session_id, size_t index,
+    dl_device_claim_properties *out_properties);
+/* Absolute CLOCK_MONOTONIC deadline, or zero when no pause is pending. */
+uint64_t dl_manager_get_next_device_pause_deadline(
+    const dl_manager *manager);
 
 uint64_t dl_manager_device_generation(
     const dl_manager *manager,

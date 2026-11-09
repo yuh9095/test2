@@ -474,8 +474,8 @@ int main(void)
             assert(by_pid_path != NULL && strcmp(by_pid_path,kill_path)==0);
             sd_bus_message_unref(reply); reply = NULL;
         }
-        call_ok(client,"org.freedesktop.login1",
-            "/org/freedesktop/login1","org.freedesktop.login1.Manager","KillSession","ssi",
+        call_ok(client,"/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager","KillSession","ssi",
             "kill-test","leader",SIGTERM);
         assert(waitpid(kill_child,&status,0)==kill_child);
         assert(WIFSIGNALED(status) && WTERMSIG(status)==SIGTERM);

@@ -1334,6 +1334,22 @@ dl_error dl_manager_session_is_controller(const dl_manager *manager, const char 
  if (!session) return DL_ERROR_NOT_FOUND;
  return session->controller_id && strcmp(session->controller_id,connection_id)==0 ? DL_OK : DL_ERROR_INVALID_STATE;
 }
+dl_error dl_manager_get_session_controller(
+    const dl_manager *manager, const char *session_id,
+    const char **out_connection_id)
+{
+    const dl_session *session;
+    if (manager == NULL || session_id == NULL || session_id[0] == '\0' ||
+        out_connection_id == NULL)
+        return DL_ERROR_INVALID_ARGUMENT;
+    *out_connection_id = NULL;
+    session = find_session(manager, session_id);
+    if (session == NULL) return DL_ERROR_NOT_FOUND;
+    if (session->controller_id == NULL) return DL_ERROR_INVALID_STATE;
+    *out_connection_id = session->controller_id;
+    return DL_OK;
+}
+
 dl_error dl_manager_release_control(
     dl_manager *manager,
     const char *session_id,

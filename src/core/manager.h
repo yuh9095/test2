@@ -200,6 +200,9 @@ dl_error dl_manager_release_control(
     dl_manager *manager,
     const char *session_id,
     const char *connection_id);
+dl_error dl_manager_get_session_controller(
+    const dl_manager *manager, const char *session_id,
+    const char **out_connection_id);
 /* Drop every controller and its device claims owned by a vanished D-Bus peer. */
 size_t dl_manager_release_controls_by_connection(
     dl_manager *manager, const char *connection_id);

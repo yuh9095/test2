@@ -7,6 +7,8 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <time.h>
@@ -35,6 +37,22 @@ static void *dispatch_thread(void *userdata)
         (void)poll(&pfd,1,20);
     }
     return NULL;
+}
+
+static bool saw_pause_device = false;
+
+static int pause_device_signal(sd_bus_message *message, void *userdata,
+    sd_bus_error *error)
+{
+    uint32_t major_number = 0U, minor_number = 0U;
+    const char *type = NULL;
+    (void)userdata;
+    (void)error;
+    if (sd_bus_message_read(message, "uus", &major_number,
+            &minor_number, &type) >= 0 && type != NULL &&
+        strcmp(type, "pause") == 0)
+        saw_pause_device = true;
+    return 0;
 }
 
 static void call_ok(sd_bus *bus,const char *path,const char *interface,
@@ -130,7 +148,10 @@ int main(void)
     const char *object_path_value=NULL;
     char object_path[256];
     int r;
-    pid_t kill_child, terminate_child, manager_terminate_child, seat_child;
+    pid_t kill_child, terminate_child, manager_terminate_child, seat_child, switch_child;
+    sd_bus_slot *pause_slot = NULL;
+    struct stat null_stat;
+    uint64_t device_generation = 0U;
     dl_session_properties kill_properties = {0};
     dl_session_properties session_properties = {0};
     dl_session_properties termination_properties = {0};
@@ -180,6 +201,18 @@ int main(void)
     session_properties.cgroup_path = "test.slice/test-session.scope";
     assert(dl_manager_add_session_with_properties(manager,"test-session",
         (uint32_t)getuid(),&session_properties)==DL_OK);
+    switch_child = fork();
+    assert(switch_child >= 0);
+    if (switch_child == 0) { for (;;) pause(); }
+    session_properties.leader_pid = (uint32_t)switch_child;
+    session_properties.type = "wayland";
+    assert(dl_manager_add_session_with_properties(manager,"switch-test",
+        (uint32_t)getuid(),&session_properties)==DL_OK);
+    assert(stat("/dev/null", &null_stat) == 0);
+    assert(dl_manager_register_device_node(manager, "seat0",
+        (uint32_t)major(null_stat.st_rdev), (uint32_t)minor(null_stat.st_rdev),
+        "/dev/null", false, DL_DEVICE_CAP_GRAPHICAL,
+        &device_generation) == DL_OK);
     assert(dl_login1_open_address(&login1,manager,address)==0);
     state.login1=login1;
     atomic_init(&state.stopping,false);
@@ -242,8 +275,70 @@ int main(void)
     }
     call_ok(client,object_path,"org.freedesktop.login1.Session","Lock","");
     call_ok(client,object_path,"org.freedesktop.login1.Session","Unlock","");
+    call_ok(client,object_path,"org.freedesktop.login1.Session","SetType","s","wayland");
+    r=sd_bus_get_property(client,"org.freedesktop.login1",object_path,
+        "org.freedesktop.login1.Session","Type",&error,&reply,"s");
+    assert(r>=0);
+    {
+        const char *session_type=NULL;
+        assert(sd_bus_message_read(reply,"s",&session_type)>=0);
+        assert(session_type!=NULL && strcmp(session_type,"wayland")==0);
+    }
+    sd_bus_message_unref(reply); reply=NULL;
+
+    /* libseat's logind backend expects PauseDevice and a fresh TakeDevice
+     * after the Session becomes active again. */
     call_ok(client,object_path,"org.freedesktop.login1.Session","TakeControl","b",0);
+    assert(sd_bus_match_signal(client,&pause_slot,"org.freedesktop.login1",
+        object_path,"org.freedesktop.login1.Session","PauseDevice",
+        pause_device_signal,NULL)>=0);
+    r=sd_bus_call_method(client,"org.freedesktop.login1",object_path,
+        "org.freedesktop.login1.Session","TakeDevice",&error,&reply,"uu",
+        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev));
+    assert(r>=0);
+    {
+        int device_fd=-1; int inactive=1;
+        assert(sd_bus_message_read(reply,"hb",&device_fd,&inactive)>=0);
+        assert(device_fd>=0 && inactive==0);
+    }
+    sd_bus_message_unref(reply); reply=NULL;
+    call_ok(client,"/org/freedesktop/login1/seat/seat0",
+        "org.freedesktop.login1.Seat","ActivateSession","s","switch-test");
+    {
+        unsigned int attempt;
+        for(attempt=0;attempt<100U && !saw_pause_device;attempt++) {
+            struct pollfd pfd={sd_bus_get_fd(client),POLLIN,0};
+            (void)sd_bus_process(client,NULL);
+            if(!saw_pause_device) (void)poll(&pfd,1,10);
+        }
+        assert(saw_pause_device);
+    }
+    assert(dl_manager_get_device_pause_state(manager,"test-session",
+        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev))==
+        DL_DEVICE_PAUSE_PENDING);
+    call_ok(client,object_path,"org.freedesktop.login1.Session",
+        "PauseDeviceComplete","uu",(uint32_t)major(null_stat.st_rdev),
+        (uint32_t)minor(null_stat.st_rdev));
+    assert(dl_manager_get_device_pause_state(manager,"test-session",
+        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev))==
+        DL_DEVICE_PAUSED);
+    call_ok(client,"/org/freedesktop/login1/seat/seat0",
+        "org.freedesktop.login1.Seat","ActivateSession","s","test-session");
+    r=sd_bus_call_method(client,"org.freedesktop.login1",object_path,
+        "org.freedesktop.login1.Session","TakeDevice",&error,&reply,"uu",
+        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev));
+    assert(r>=0);
+    {
+        int device_fd=-1; int inactive=1;
+        assert(sd_bus_message_read(reply,"hb",&device_fd,&inactive)>=0);
+        assert(device_fd>=0 && inactive==0);
+    }
+    sd_bus_message_unref(reply); reply=NULL;
+    call_ok(client,object_path,"org.freedesktop.login1.Session",
+        "ReleaseDevice","uu",(uint32_t)major(null_stat.st_rdev),
+        (uint32_t)minor(null_stat.st_rdev));
     call_ok(client,object_path,"org.freedesktop.login1.Session","ReleaseControl","");
+    pause_slot=sd_bus_slot_unref(pause_slot);
     call_ok(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","ListSessions","");
 
@@ -325,6 +420,7 @@ int main(void)
         assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
     }
 
+    { int status=0; (void)kill(switch_child,SIGTERM); assert(waitpid(switch_child,&status,0)==switch_child); }
     sd_bus_close_unref(client);
     atomic_store(&state.stopping,true);
     assert(pthread_join(thread,NULL)==0);

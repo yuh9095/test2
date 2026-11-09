@@ -42,6 +42,8 @@ struct dl_login1 {
 
 static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
     const char *seat_id, const char *session_id);
+static int pause_session_devices(sd_bus *bus, dl_manager *manager,
+    const char *session_id);
 static int seat_lookup(const char *path, void *userdata, char *id, size_t cap);
 static int termination_schedule(dl_login1 *service, const char *session_id);
 static int termination_error_reply(sd_bus_message *message, int error_number);

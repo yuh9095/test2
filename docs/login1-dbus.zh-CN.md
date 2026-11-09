@@ -26,9 +26,11 @@ Session：
 - `Terminate()`：与 Manager.TerminateSession 使用相同的异步终止状态机。
 - `TakeControl(force)`、`ReleaseControl()`：以 D-Bus unique name 绑定控制权；
   校验调用者 UID，强制接管仅允许 root。
+- `SetType(type)`：由 Session owner 或 root 更新 `Type` 属性，并发出 PropertiesChanged。
 - `TakeDevice(major,minor)`：由核心设备管理层打开并验证字符设备，返回 D-Bus Unix FD
-  和 inactive 标志。
+  和 inactive 标志；已暂停的 claim 在 Session 重新激活后可重新打开并恢复。
 - `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。控制者 D-Bus unique name 消失时，NameOwnerChanged 监听器会自动释放该连接持有的所有设备 claim 与管理 FD。
+- Seat 活动 Session 切换时，对旧 Session 的已领取设备发出 `PauseDevice(major,minor,"pause")`；客户端确认后关闭管理 FD，未及时确认则在超时后发出 `"force"` 并关闭管理 FD。设备被 udev 移除时向持有者发出 `"gone"`。重新激活后，libseat 可通过 `TakeDevice()` 重新获取 FD。
 
 Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑
 活动 Session；`SwitchTo(vtnr)`、`SwitchToNext()`、`SwitchToPrevious()` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，
@@ -48,12 +50,14 @@ User 对象路径。
 - **Terminate**：已实现异步 SIGTERM、5 秒宽限期和超时 SIGKILL。cgroup v2
   Session 会先固定并验证 cgroup 目录，超时后使用该目录的 `cgroup.kill`；
   无 cgroup 的会话仅能保证强制结束已登记的 Leader，不能声称清理其所有后代进程。
-- **设备暂停通知**：核心有 pause state 与超时原语；D-Bus 控制器断连清理已实现，
-  会释放该连接拥有的所有 claim 和管理 FD。但 seatd/libseat 的 pause/resume 回调
-  尚未映射为 login1 的 PauseDevice/ResumeDevice 信号，客户端 FD 的恢复通知也未完成。
+- **设备暂停通知**：已接入 login1 的 `PauseDevice` 信号协议，包括 `pause`、`force`、`gone`；
+  活动 Session 切换会请求客户端释放设备，超时后发送强制暂停通知，设备移除会通知持有者。
+  libseat 的 Active 属性变化后可重新调用 `TakeDevice()` 获取新的 FD。Linux 内核不能通用撤销
+  客户端已复制的任意设备 FD，因此 `force` 是通知和服务端 FD 清理，不等同于内核级 FD 撤销。
 - **VT**：支持 seat0 的 `SwitchTo(vtnr)`、`SwitchToNext()` 和 `SwitchToPrevious()`；
   后两者依据已登记且具有 VTNr 的 Session 选择下一个/上一个 VT，并循环查找。
-  容器没有可用 VT 时返回 NotSupported。Seat.Terminate 仍未实现。
+  容器没有可用 VT 时返回 NotSupported。`Seat.Terminate()` 已实现为 root-only 的异步
+  Session 终止请求，使用与 `TerminateSession()` 相同的安全终止状态机。
 - **Session 查询**：`GetSessionByPID` / `GetUserByPID` 当前只按已登记 Leader PID
   匹配，不是整个 Session 的进程索引。
 - **Turnstile/PAM**：已有特权注册协议和 PAM 生命周期基础；完整 Turnstile 会话属性、

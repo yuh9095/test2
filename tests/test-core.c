@@ -36,6 +36,22 @@ static void test_device_fd_and_controller_lifecycle(void)
     assert(dl_manager_take_device_fd(
         manager, "s1", ":1.42", 1U, 3U, &fd, &inactive) == DL_OK);
     assert(fd >= 0 && !inactive);
+    {
+        dl_device_claim_properties claim = {0};
+        dl_session_properties session = {0};
+        assert(dl_manager_get_session_device_claim_count(manager, "s1") == 1U);
+        assert(dl_manager_get_session_device_claim_at(manager, "s1", 0U,
+            &claim) == DL_OK);
+        assert(claim.major_number == 1U && claim.minor_number == 3U);
+        assert(claim.pause_state == DL_DEVICE_ACTIVE);
+        assert(dl_manager_get_session_device_claim_at(manager, "s1", 1U,
+            &claim) == DL_ERROR_NOT_FOUND);
+        assert(dl_manager_set_session_type(manager, "s1", "wayland") == DL_OK);
+        assert(dl_manager_get_session_properties(manager, "s1", &session) == DL_OK);
+        assert(session.type != NULL && strcmp(session.type, "wayland") == 0);
+        assert(dl_manager_set_session_type(manager, "s1", "") ==
+            DL_ERROR_INVALID_ARGUMENT);
+    }
     assert((fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0);
     assert(close(fd) == 0);
 

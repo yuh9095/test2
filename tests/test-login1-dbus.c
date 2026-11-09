@@ -144,7 +144,7 @@ int main(void)
     const char *address=getenv("DBUS_SESSION_BUS_ADDRESS");
     dl_manager *manager=NULL;
     dl_login1 *login1=NULL;
-    sd_bus *client=NULL;
+    sd_bus *client=NULL, *controller_client=NULL;
     pthread_t thread;
     service_state state={0};
     sd_bus_error error=SD_BUS_ERROR_NULL;
@@ -159,6 +159,7 @@ int main(void)
     dl_session_properties kill_properties = {0};
     dl_session_properties session_properties = {0};
     dl_session_properties termination_properties = {0};
+    dl_session_properties disconnect_properties = {0};
     assert(address!=NULL && address[0] != 0);
     assert(dl_manager_create(&manager)==DL_OK);
     assert(dl_manager_add_seat(manager,"seat0")==DL_OK);
@@ -212,6 +213,11 @@ int main(void)
     session_properties.type = "wayland";
     assert(dl_manager_add_session_with_properties(manager,"switch-test",
         (uint32_t)getuid(),&session_properties)==DL_OK);
+    disconnect_properties.seat_id = "seat0";
+    disconnect_properties.class_name = "user";
+    disconnect_properties.service = "disconnect-test";
+    assert(dl_manager_add_session_with_properties(manager,"disconnect-test",
+        (uint32_t)getuid(),&disconnect_properties)==DL_OK);
     assert(stat("/dev/null", &null_stat) == 0);
     assert(dl_manager_register_device_node(manager, "seat0",
         (uint32_t)major(null_stat.st_rdev), (uint32_t)minor(null_stat.st_rdev),
@@ -391,6 +397,34 @@ int main(void)
         (uint32_t)minor(null_stat.st_rdev));
     call_ok(client,object_path,"org.freedesktop.login1.Session","ReleaseControl","");
     pause_slot=sd_bus_slot_unref(pause_slot);
+
+    /* A vanished D-Bus controller must not leave ownership or device claims. */
+    {
+        char disconnect_path[256], controller_name[128];
+        const char *unique_name=NULL, *remaining=NULL;
+        unsigned int attempt;
+        assert(sd_bus_open_system(&controller_client)==0);
+        get_session_path(controller_client,"disconnect-test",disconnect_path);
+        call_ok(controller_client,disconnect_path,
+            "org.freedesktop.login1.Session","TakeControl","b",0);
+        assert(sd_bus_get_unique_name(controller_client,&unique_name)>=0);
+        assert(unique_name!=NULL);
+        assert(snprintf(controller_name,sizeof(controller_name),"%s",
+            unique_name)>0);
+        sd_bus_close_unref(controller_client);
+        controller_client=NULL;
+        for(attempt=0;attempt<100U;attempt++) {
+            if(dl_manager_get_session_controller(manager,"disconnect-test",
+                    &remaining)!=DL_OK)
+                break;
+            {
+                struct timespec delay={0,10000000L};
+                (void)nanosleep(&delay,NULL);
+            }
+        }
+        assert(attempt<100U);
+        (void)controller_name;
+    }
     call_ok(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","ListSessions","");
 

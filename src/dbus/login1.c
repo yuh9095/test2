@@ -45,6 +45,8 @@ static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
 static int seat_lookup(const char *path, void *userdata, char *id, size_t cap);
 static int termination_schedule(dl_login1 *service, const char *session_id);
 static int termination_error_reply(sd_bus_message *message, int error_number);
+static void device_removed_callback(dl_manager *manager, const char *seat_id,
+    uint32_t major_number, uint32_t minor_number, void *userdata);
 
 static int make_path(const char *prefix, const char *id, char *out, size_t cap)
 {
@@ -454,6 +456,10 @@ static int switch_to_vt(sd_bus *bus, dl_manager *manager,
             parse_vt_number(p.tty, &candidate) < 0 ||
             candidate != vt_number) continue;
         return activate_session_on_seat(bus, manager, seat_id, p.session_id);
+    }
+    if (old_id[0] != '\0') {
+        r = pause_session_devices(bus, manager, old_id);
+        if (r < 0) return r;
     }
     r = dl_manager_set_active_session(manager, seat_id, NULL);
     if (r != DL_OK) return -EINVAL;
@@ -1319,6 +1325,71 @@ static const sd_bus_vtable seat_vtable[] = {
     SD_BUS_VTABLE_END
 };
 
+static void device_removed_callback(dl_manager *manager, const char *seat_id,
+    uint32_t major_number, uint32_t minor_number, void *userdata)
+{
+    dl_login1 *service = userdata;
+    size_t i, count;
+    if (service == NULL || service->bus == NULL) return;
+    count = dl_manager_get_session_count(manager);
+    for (i = 0U; i < count; i++) {
+        dl_session_properties p = {0};
+        size_t j, claims;
+        char object[256];
+        if (dl_manager_get_session_at(manager, i, &p) != DL_OK ||
+            p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0)
+            continue;
+        claims = dl_manager_get_session_device_claim_count(manager, p.session_id);
+        for (j = 0U; j < claims; j++) {
+            dl_device_claim_properties claim = {0};
+            if (dl_manager_get_session_device_claim_at(manager, p.session_id,
+                    j, &claim) != DL_OK ||
+                claim.major_number != major_number ||
+                claim.minor_number != minor_number)
+                continue;
+            if (make_path(SESSION_PATH, p.session_id, object,
+                    sizeof(object)) < 0)
+                continue;
+            (void)sd_bus_emit_signal(service->bus, object, BUS_NAME ".Session",
+                "PauseDevice", "uus", major_number, minor_number, "gone");
+            break;
+        }
+    }
+}
+
+static void device_pause_timeout_dispatch(dl_login1 *service)
+{
+    uint64_t now = termination_now_ms();
+    size_t i, count;
+    if (now == 0U) return;
+    count = dl_manager_get_session_count(service->manager);
+    for (i = 0U; i < count; i++) {
+        dl_session_properties p = {0};
+        size_t j, claims;
+        char object[256];
+        if (dl_manager_get_session_at(service->manager, i, &p) != DL_OK)
+            continue;
+        claims = dl_manager_get_session_device_claim_count(
+            service->manager, p.session_id);
+        for (j = 0U; j < claims; j++) {
+            dl_device_claim_properties claim = {0};
+            if (dl_manager_get_session_device_claim_at(service->manager,
+                    p.session_id, j, &claim) != DL_OK ||
+                claim.pause_state != DL_DEVICE_PAUSE_PENDING ||
+                claim.pause_deadline_ms == 0U ||
+                claim.pause_deadline_ms > now)
+                continue;
+            if (make_path(SESSION_PATH, p.session_id, object,
+                    sizeof(object)) < 0)
+                continue;
+            (void)sd_bus_emit_signal(service->bus, object, BUS_NAME ".Session",
+                "PauseDevice", "uus", claim.major_number,
+                claim.minor_number, "force");
+        }
+    }
+    (void)dl_manager_expire_device_pauses(service->manager, now);
+}
+
 static int method_name_owner_changed(sd_bus_message *message,
     void *userdata, sd_bus_error *error)
 {
@@ -1351,6 +1422,7 @@ static int login1_open_internal(dl_login1 **out, dl_manager *manager,
     if (r<0) goto fail;
     s->manager = manager;
     dl_manager_set_adapter_userdata(manager, s);
+    dl_manager_set_device_removed_callback(manager, device_removed_callback, s);
     r=sd_bus_add_object_vtable(s->bus,&s->manager_slot,ROOT_PATH,
         BUS_NAME ".Manager",manager_vtable,manager); if (r<0) goto fail;
     r=sd_bus_add_fallback_vtable(s->bus,&s->session_slot,SESSION_PATH,
@@ -1405,7 +1477,7 @@ int dl_login1_dispatch(dl_login1 *s)
     do { r=sd_bus_process(s->bus,NULL); } while (r>0);
     if (r < 0) return r;
     termination_dispatch(s);
-    (void)dl_manager_expire_device_pauses(s->manager, termination_now_ms());
+    device_pause_timeout_dispatch(s);
     return 0;
 }
 void dl_login1_close(dl_login1 *s)
@@ -1416,9 +1488,11 @@ void dl_login1_close(dl_login1 *s)
         s->terminations = item->next;
         termination_free(item);
     }
-    if (s->manager != NULL &&
-        dl_manager_get_adapter_userdata(s->manager) == s)
-        dl_manager_set_adapter_userdata(s->manager, NULL);
+    if (s->manager != NULL) {
+        dl_manager_set_device_removed_callback(s->manager, NULL, NULL);
+        if (dl_manager_get_adapter_userdata(s->manager) == s)
+            dl_manager_set_adapter_userdata(s->manager, NULL);
+    }
     s->owner_slot=sd_bus_slot_unref(s->owner_slot);
     s->seat_slot=sd_bus_slot_unref(s->seat_slot);
     s->user_slot=sd_bus_slot_unref(s->user_slot);

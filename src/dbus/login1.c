@@ -1365,7 +1365,6 @@ static void device_removed_callback(dl_manager *manager, const char *seat_id,
     for (i = 0U; i < count; i++) {
         dl_session_properties p = {0};
         size_t j, claims;
-        char object[256];
         if (dl_manager_get_session_at(manager, i, &p) != DL_OK ||
             p.seat_id == NULL || strcmp(p.seat_id, seat_id) != 0)
             continue;
@@ -1376,9 +1375,6 @@ static void device_removed_callback(dl_manager *manager, const char *seat_id,
                     j, &claim) != DL_OK ||
                 claim.major_number != major_number ||
                 claim.minor_number != minor_number)
-                continue;
-            if (make_path(SESSION_PATH, p.session_id, object,
-                    sizeof(object)) < 0)
                 continue;
             (void)emit_pause_device_to_controller(service->bus, manager,
                 p.session_id, major_number, minor_number, "gone");
@@ -1396,7 +1392,6 @@ static void device_pause_timeout_dispatch(dl_login1 *service)
     for (i = 0U; i < count; i++) {
         dl_session_properties p = {0};
         size_t j, claims;
-        char object[256];
         if (dl_manager_get_session_at(service->manager, i, &p) != DL_OK)
             continue;
         claims = dl_manager_get_session_device_claim_count(
@@ -1408,9 +1403,6 @@ static void device_pause_timeout_dispatch(dl_login1 *service)
                 claim.pause_state != DL_DEVICE_PAUSE_PENDING ||
                 claim.pause_deadline_ms == 0U ||
                 claim.pause_deadline_ms > now)
-                continue;
-            if (make_path(SESSION_PATH, p.session_id, object,
-                    sizeof(object)) < 0)
                 continue;
             (void)emit_pause_device_to_controller(service->bus,
                 service->manager, p.session_id, claim.major_number,

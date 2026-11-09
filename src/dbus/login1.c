@@ -13,6 +13,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <limits.h>
+#include <poll.h>
+#include <sys/syscall.h>
 
 #define TERMINATION_GRACE_MS 5000U
 
@@ -159,6 +161,55 @@ static int get_session(sd_bus_message *m, void *userdata, sd_bus_error *error)
     return sd_bus_reply_method_return(m, "o", obj);
 }
 
+static dl_error find_session_by_pid(const dl_manager *manager,
+    uint32_t pid, dl_session_properties *out_properties)
+{
+    size_t i, count;
+    int pidfd = -1, root_fd = -1;
+    dl_error result = DL_ERROR_NOT_FOUND;
+    struct pollfd identity;
+    if (manager == NULL || pid == 0U || out_properties == NULL)
+        return DL_ERROR_INVALID_ARGUMENT;
+    if (dl_manager_find_session_by_leader_pid(manager, pid,
+            out_properties) == DL_OK)
+        return DL_OK;
+#if defined(SYS_pidfd_open)
+    pidfd = (int)syscall(SYS_pidfd_open, (pid_t)pid, 0U);
+#endif
+    if (pidfd < 0) return DL_ERROR_NOT_FOUND;
+    root_fd = open("/sys/fs/cgroup", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (root_fd < 0) goto done;
+    count = dl_manager_get_session_count(manager);
+    for (i = 0U; i < count; i++) {
+        dl_session_properties candidate = {0};
+        bool contains = false;
+        int cgroup_fd;
+        if (dl_manager_get_session_at(manager, i, &candidate) != DL_OK ||
+            candidate.cgroup_path == NULL ||
+            candidate.cgroup_path[0] == '\0')
+            continue;
+        cgroup_fd = dl_session_cgroup_openat(root_fd,
+            candidate.cgroup_path);
+        if (cgroup_fd < 0) continue;
+        if (dl_session_cgroup_contains_pid(cgroup_fd, pid, &contains) == 0 &&
+            contains) {
+            identity.fd = pidfd;
+            identity.events = POLLIN;
+            identity.revents = 0;
+            if (poll(&identity, 1U, 0) == 0 &&
+                dl_manager_get_session_properties(manager,
+                    candidate.session_id, out_properties) == DL_OK)
+                result = DL_OK;
+        }
+        (void)close(cgroup_fd);
+        if (result == DL_OK) break;
+    }
+done:
+    if (root_fd >= 0) (void)close(root_fd);
+    (void)close(pidfd);
+    return result;
+}
+
 static int get_session_pid(sd_bus_message *m, void *userdata, sd_bus_error *error)
 {
     uint32_t pid = 0;
@@ -167,7 +218,7 @@ static int get_session_pid(sd_bus_message *m, void *userdata, sd_bus_error *erro
     int r;
     (void)error;
     if ((r = sd_bus_message_read(m, "u", &pid)) < 0) return r;
-    if (dl_manager_find_session_by_leader_pid(userdata, pid, &p) != DL_OK)
+    if (find_session_by_pid(userdata, pid, &p) != DL_OK)
         return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
             "No registered Session has leader PID %u", pid);
     if ((r = make_path(SESSION_PATH, p.session_id, obj, sizeof(obj))) < 0) return r;
@@ -215,7 +266,7 @@ static int get_user_by_pid(sd_bus_message *m, void *userdata,
     int r;
     (void)error;
     if ((r = sd_bus_message_read(m, "u", &pid)) < 0) return r;
-    if (dl_manager_find_session_by_leader_pid(userdata, pid, &p) != DL_OK)
+    if (find_session_by_pid(userdata, pid, &p) != DL_OK)
         return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_UNKNOWN_OBJECT,
             "No registered Session has leader PID %u", pid);
     if ((r = user_object_path(p.uid, object, sizeof(object))) < 0) return r;

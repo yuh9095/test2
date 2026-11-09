@@ -30,7 +30,7 @@ Session：
 - `TakeDevice(major,minor)`：由核心设备管理层打开并验证字符设备，返回 D-Bus Unix FD
   和 inactive 标志；已暂停的 claim 在 Session 重新激活后可重新打开并恢复。
 - `ReleaseDevice()`、`PauseDeviceComplete()`：要求当前 D-Bus 控制者身份匹配。控制者 D-Bus unique name 消失时，NameOwnerChanged 监听器会自动释放该连接持有的所有设备 claim 与管理 FD。
-- Seat 活动 Session 切换时，对旧 Session 的已领取设备发出 `PauseDevice(major,minor,"pause")`；客户端确认后关闭管理 FD，未及时确认则在超时后发出 `"force"` 并关闭管理 FD。设备被 udev 移除时向持有者发出 `"gone"`。重新激活后，libseat 可通过 `TakeDevice()` 重新获取 FD。
+- Seat 活动 Session 切换时，对旧 Session 的已领取设备发出 `PauseDevice(major,minor,"pause")`；客户端确认后关闭管理 FD，未及时确认则在超时后发出 `"force"` 并关闭管理 FD。设备被 udev 移除时向持有者发出 `"gone"`。重新激活后，服务端通过 `ResumeDevice(major,minor,fd)` 向原控制者传递重新打开的设备 FD；没有活动控制者时才需要客户端重新调用 `TakeDevice()`。
 
 Seat：Id、ActiveSession、CanTTY、CanGraphical、Sessions；`ActivateSession()` 更新逻辑
 活动 Session；`SwitchTo(vtnr)`、`SwitchToNext()`、`SwitchToPrevious()` 通过 Linux VT ioctl 执行 seat0 的真实 VT 切换，
@@ -68,7 +68,7 @@ User 对象路径。
 `login1-private-dbus-integration`。测试使用临时会话总线，不占用宿主机系统总线，
 也不要求 systemd 或 systemd-logind。测试覆盖 Manager/Session 查询、用户查询、Seat/Session 激活、Lock/Unlock、SetType、
 TakeControl/ReleaseControl、/dev/null 与 /dev/zero 的 D-Bus Unix FD passing、PauseDevice
-pause/force/gone、PauseDeviceComplete、超时清理、恢复后重新 TakeDevice，以及
+pause/force/gone、PauseDeviceComplete、ResumeDevice Unix FD 恢复交接、超时清理，以及
 Manager.KillSession 和 Session.Kill 的 pidfd Leader 信号发送、GetSessionByPID
 Leader 查询和非法 Kill 参数。真实 DRM/input 设备、物理 VT 和完整桌面客户端行为仍需
 在具有相应硬件与 seatd/libseat 环境的系统中验证。

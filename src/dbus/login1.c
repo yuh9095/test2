@@ -754,6 +754,63 @@ done:
     return r < 0 ? r : 0;
 }
 
+static int emit_resume_device_to_controller(sd_bus *bus,
+    dl_manager *manager, const char *session_id, uint32_t major_number,
+    uint32_t minor_number)
+{
+    const char *destination = NULL;
+    char object[256];
+    sd_bus_message *message = NULL;
+    int fd = -1, r;
+    if (dl_manager_get_session_controller(manager, session_id,
+            &destination) != DL_OK)
+        return 0;
+    r = dl_manager_resume_device_fd(manager, session_id, destination,
+        major_number, minor_number, &fd);
+    if (r != DL_OK) return 0;
+    if ((r = make_path(SESSION_PATH, session_id, object,
+            sizeof(object))) < 0)
+        goto fail;
+    if ((r = sd_bus_message_new_signal(bus, &message, object,
+            BUS_NAME ".Session", "ResumeDevice")) < 0)
+        goto fail;
+    if ((r = sd_bus_message_append(message, "uuh", major_number,
+            minor_number, fd)) < 0)
+        goto fail;
+    if ((r = sd_bus_message_set_destination(message, destination)) < 0)
+        goto fail;
+    r = sd_bus_send(bus, message, NULL);
+    if (r < 0) goto fail;
+    sd_bus_message_unref(message);
+    (void) close(fd);
+    return 0;
+fail:
+    sd_bus_message_unref(message);
+    if (fd >= 0) (void) close(fd);
+    (void) dl_manager_pause_device(manager, session_id, major_number,
+        minor_number, true);
+    return r;
+}
+
+static int resume_session_devices(sd_bus *bus, dl_manager *manager,
+    const char *session_id)
+{
+    size_t i, count = dl_manager_get_session_device_claim_count(
+        manager, session_id);
+    for (i = 0U; i < count; i++) {
+        dl_device_claim_properties claim = {0};
+        int r;
+        if (dl_manager_get_session_device_claim_at(manager, session_id, i,
+                &claim) != DL_OK)
+            return -EIO;
+        if (claim.pause_state != DL_DEVICE_PAUSED) continue;
+        r = emit_resume_device_to_controller(bus, manager, session_id,
+            claim.major_number, claim.minor_number);
+        if (r < 0) return r;
+    }
+    return 0;
+}
+
 static int pause_session_devices(sd_bus *bus, dl_manager *manager,
     const char *session_id)
 {
@@ -814,8 +871,9 @@ static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
     }
     if ((r = make_path(SESSION_PATH, session_id, session_path,
             sizeof(session_path))) < 0) return r;
-    return sd_bus_emit_properties_changed(bus, session_path,
-        BUS_NAME ".Session", "Active", NULL);
+    if ((r = sd_bus_emit_properties_changed(bus, session_path,
+            BUS_NAME ".Session", "Active", NULL)) < 0) return r;
+    return resume_session_devices(bus, manager, session_id);
 }
 
 static int method_seat_terminate(sd_bus_message *m, void *userdata,

@@ -42,6 +42,25 @@ static void *dispatch_thread(void *userdata)
 static bool saw_pause_device = false;
 static bool saw_force_device = false;
 static bool saw_gone_device = false;
+static unsigned int resume_device_count = 0U;
+static bool resume_device_fd_valid = false;
+
+static int resume_device_signal(sd_bus_message *message, void *userdata,
+    sd_bus_error *error)
+{
+    uint32_t major_number = 0U, minor_number = 0U;
+    int fd = -1;
+    struct stat st;
+    (void)userdata;
+    (void)error;
+    if (sd_bus_message_read(message, "uuh", &major_number, &minor_number,
+            &fd) >= 0 && fd >= 0 && fstat(fd, &st) == 0 &&
+            S_ISCHR(st.st_mode)) {
+        resume_device_fd_valid = true;
+        resume_device_count++;
+    }
+    return 0;
+}
 
 static int pause_device_signal(sd_bus_message *message, void *userdata,
     sd_bus_error *error)
@@ -153,7 +172,7 @@ int main(void)
     char object_path[256];
     int r;
     pid_t kill_child, session_kill_child, terminate_child, manager_terminate_child, seat_child, switch_child;
-    sd_bus_slot *pause_slot = NULL;
+    sd_bus_slot *pause_slot = NULL, *resume_slot = NULL;
     struct stat null_stat, zero_stat;
     uint64_t device_generation = 0U;
     dl_session_properties kill_properties = {0};
@@ -316,6 +335,9 @@ int main(void)
     assert(sd_bus_match_signal(client,&pause_slot,"org.freedesktop.login1",
         object_path,"org.freedesktop.login1.Session","PauseDevice",
         pause_device_signal,NULL)>=0);
+    assert(sd_bus_match_signal(client,&resume_slot,"org.freedesktop.login1",
+        object_path,"org.freedesktop.login1.Session","ResumeDevice",
+        resume_device_signal,NULL)>=0);
     r=sd_bus_call_method(client,"org.freedesktop.login1",object_path,
         "org.freedesktop.login1.Session","TakeDevice",&error,&reply,"uu",
         (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev));
@@ -348,16 +370,18 @@ int main(void)
         DL_DEVICE_PAUSED);
     call_ok(client,"/org/freedesktop/login1/seat/seat0",
         "org.freedesktop.login1.Seat","ActivateSession","s","test-session");
-    r=sd_bus_call_method(client,"org.freedesktop.login1",object_path,
-        "org.freedesktop.login1.Session","TakeDevice",&error,&reply,"uu",
-        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev));
-    assert(r>=0);
     {
-        int device_fd=-1; int inactive=1;
-        assert(sd_bus_message_read(reply,"hb",&device_fd,&inactive)>=0);
-        assert(device_fd>=0 && inactive==0);
+        unsigned int attempt;
+        for(attempt=0;attempt<100U && resume_device_count<1U;attempt++) {
+            struct pollfd pfd={sd_bus_get_fd(client),POLLIN,0};
+            (void)sd_bus_process(client,NULL);
+            if(resume_device_count<1U) (void)poll(&pfd,1,10);
+        }
+        assert(resume_device_count==1U && resume_device_fd_valid);
     }
-    sd_bus_message_unref(reply); reply=NULL;
+    assert(dl_manager_get_device_pause_state(manager,"test-session",
+        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev))==
+        DL_DEVICE_ACTIVE);
     /* If the client does not acknowledge a later pause, the daemon emits
      * the force notification at the one-second deadline. */
     call_ok(client,"/org/freedesktop/login1/seat/seat0",
@@ -376,11 +400,18 @@ int main(void)
         DL_DEVICE_PAUSED);
     call_ok(client,"/org/freedesktop/login1/seat/seat0",
         "org.freedesktop.login1.Seat","ActivateSession","s","test-session");
-    r=sd_bus_call_method(client,"org.freedesktop.login1",object_path,
-        "org.freedesktop.login1.Session","TakeDevice",&error,&reply,"uu",
-        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev));
-    assert(r>=0);
-    sd_bus_message_unref(reply); reply=NULL;
+    {
+        unsigned int attempt;
+        for(attempt=0;attempt<100U && resume_device_count<2U;attempt++) {
+            struct pollfd pfd={sd_bus_get_fd(client),POLLIN,0};
+            (void)sd_bus_process(client,NULL);
+            if(resume_device_count<2U) (void)poll(&pfd,1,10);
+        }
+        assert(resume_device_count==2U && resume_device_fd_valid);
+    }
+    assert(dl_manager_get_device_pause_state(manager,"test-session",
+        (uint32_t)major(null_stat.st_rdev),(uint32_t)minor(null_stat.st_rdev))==
+        DL_DEVICE_ACTIVE);
 
     /* A udev removal notifies the owning Session with type=gone and drops
      * the associated server-side claim. */
@@ -406,6 +437,7 @@ int main(void)
         (uint32_t)minor(null_stat.st_rdev));
     call_ok(client,object_path,"org.freedesktop.login1.Session","ReleaseControl","");
     pause_slot=sd_bus_slot_unref(pause_slot);
+    resume_slot=sd_bus_slot_unref(resume_slot);
 
     /* A vanished D-Bus controller must not leave ownership or device claims. */
     {

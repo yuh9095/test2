@@ -1398,8 +1398,40 @@ static int prop_user_sessions(sd_bus *b, const char *path, const char *interface
 }
 
 
+/* The daemon deliberately has no machine power backend yet. Report
+ * capability absence using login1's documented "na" value and keep action
+ * methods present so clients receive a stable NotSupported error. */
+static int method_power_capability(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    (void)userdata;
+    (void)error;
+    return sd_bus_reply_method_return(m, "s", "na");
+}
+
+static int method_power_action_unsupported(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    (void)userdata;
+    (void)error;
+    return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_NOT_SUPPORTED,
+        "No power-management backend is configured");
+}
+
 static const sd_bus_vtable manager_vtable[] = {
     SD_BUS_VTABLE_START(0),
+    SD_BUS_METHOD("CanPowerOff","","s",method_power_capability,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("CanReboot","","s",method_power_capability,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("CanSuspend","","s",method_power_capability,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("CanHibernate","","s",method_power_capability,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("CanHybridSleep","","s",method_power_capability,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("CanSuspendThenHibernate","","s",method_power_capability,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("PowerOff","b","",method_power_action_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Reboot","b","",method_power_action_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Suspend","b","",method_power_action_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("Hibernate","b","",method_power_action_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("HybridSleep","b","",method_power_action_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("SuspendThenHibernate","b","",method_power_action_unsupported,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("ListSessions","","a(susso)",list_sessions,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSession","s","o",get_session,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("GetSessionByPID","u","o",get_session_pid,SD_BUS_VTABLE_UNPRIVILEGED),

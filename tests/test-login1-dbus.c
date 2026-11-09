@@ -263,6 +263,34 @@ int main(void)
     assert(setenv("DBUS_SYSTEM_BUS_ADDRESS",address,1)==0);
     assert(sd_bus_open_system(&client)==0);
 
+    /* Power capabilities are explicitly unavailable, and requests fail
+     * safely instead of silently pretending a reboot/suspend occurred. */
+    {
+        static const char *const capability_methods[] = {
+            "CanPowerOff", "CanReboot", "CanSuspend", "CanHibernate",
+            "CanHybridSleep", "CanSuspendThenHibernate"
+        };
+        static const char *const action_methods[] = {
+            "PowerOff", "Reboot", "Suspend", "Hibernate",
+            "HybridSleep", "SuspendThenHibernate"
+        };
+        size_t i;
+        for (i = 0U; i < sizeof(capability_methods)/sizeof(capability_methods[0]); i++) {
+            const char *capability = NULL;
+            r = sd_bus_call_method(client, "org.freedesktop.login1",
+                "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+                capability_methods[i], &error, &reply, "");
+            assert(r >= 0);
+            assert(sd_bus_message_read(reply, "s", &capability) >= 0);
+            assert(capability != NULL && strcmp(capability, "na") == 0);
+            sd_bus_message_unref(reply); reply = NULL;
+        }
+        for (i = 0U; i < sizeof(action_methods)/sizeof(action_methods[0]); i++) {
+            call_not_supported(client, "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager", action_methods[i], "b", 0);
+        }
+    }
+
     r=sd_bus_call_method(client,"org.freedesktop.login1",
         "/org/freedesktop/login1","org.freedesktop.login1.Manager",
         "GetSession",&error,&reply,"s","test-session");

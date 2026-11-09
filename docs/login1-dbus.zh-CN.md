@@ -6,6 +6,12 @@ dinit-logind 使用 `libsystemd` 的 `sd-bus` API 连接系统 D-Bus；不启动
 ## 已导出接口
 
 Manager：
+- `CanPowerOff()`、`CanReboot()`、`CanSuspend()`、`CanHibernate()`、
+  `CanHybridSleep()`、`CanSuspendThenHibernate()`：当前统一返回 `"na"`，
+  明确表示没有可用的电源管理后端。
+- `PowerOff()`、`Reboot()`、`Suspend()`、`Hibernate()`、`HybridSleep()`、
+  `SuspendThenHibernate()`：保留标准 D-Bus 方法签名，但明确返回 NotSupported；
+  不会伪装成功，也不会直接调用宿主机电源操作。
 - `ListSessions()`、`GetSession()`、`GetSessionByPID()`
 - `ListSeats()`、`GetSeat()`
 - `GetUser()`、`GetUserByPID()`、`ListUsers()`；User 对象提供 `UID`、`Name`、`Sessions`。
@@ -50,7 +56,9 @@ User 对象路径。
 - **Terminate**：已实现异步 SIGTERM、5 秒宽限期和超时 SIGKILL。cgroup v2
   Session 会先固定并验证 cgroup 目录，超时后使用该目录的 `cgroup.kill`；
   无 cgroup 的会话仅能保证强制结束已登记的 Leader，不能声称清理其所有后代进程。
-- **设备暂停通知**：已接入 login1 的 `PauseDevice` 信号协议，包括 `pause`、`force`、`gone`；
+- **电源管理**：当前不控制宿主机或容器电源。能力查询返回 `na`，操作方法返回 NotSupported；
+  inhibitor、延迟锁与真实 reboot/suspend backend 尚未实现。
+- **设备暂停通知**：已接入 login1 的 `PauseDevice` / `ResumeDevice` 信号协议，包括 `pause`、`force`、`gone` 以及重新打开的 FD handoff；
   活动 Session 切换会请求客户端释放设备，超时后发送强制暂停通知，设备移除会通知持有者。
   libseat 的 Active 属性变化后可重新调用 `TakeDevice()` 获取新的 FD。Linux 内核不能通用撤销
   客户端已复制的任意设备 FD，因此 `force` 是通知和服务端 FD 清理，不等同于内核级 FD 撤销。

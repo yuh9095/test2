@@ -58,8 +58,7 @@ User 对象路径。
   后两者依据已登记且具有 VTNr 的 Session 选择下一个/上一个 VT，并循环查找。
   容器没有可用 VT 时返回 NotSupported。`Seat.Terminate()` 已实现为 root-only 的异步
   Session 终止请求，使用与 `TerminateSession()` 相同的安全终止状态机。
-- **Session 查询**：`GetSessionByPID` / `GetUserByPID` 当前只按已登记 Leader PID
-  匹配，不是整个 Session 的进程索引。
+- **Session 查询**：`GetSessionByPID` / `GetUserByPID` 优先按 Leader PID 匹配；非 Leader 进程仅在 pidfd 身份固定成功且 PID 出现在已登记 cgroup 的直接 `cgroup.procs` 时匹配。当前不递归扫描子 cgroup，也不按 UID 猜测进程归属。
 - **Turnstile/PAM**：已有特权注册协议和 PAM 生命周期基础；完整 Turnstile 会话属性、
   XDG_RUNTIME_DIR 生命周期、用户服务管理仍需集成与端到端验证。
 

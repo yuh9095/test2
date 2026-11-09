@@ -3,13 +3,13 @@
 核心 Session 是 login1 D-Bus 适配器的数据来源。当前查询接口：
 
 - `dl_manager_get_session_properties()`：按 Session ID 读取完整元数据，返回值包含 Session ID 和 UID。
-- `dl_manager_find_session_by_leader_pid()`：按已登记的 leader PID 查找 Session。
+- `dl_manager_find_session_by_leader_pid()`：按已登记的 leader PID 查找 Session。login1 适配器在此基础上还会用 pidfd 固定查询进程身份，并扫描已登记 cgroup 的直接 `cgroup.procs` 成员关系。
 - `dl_manager_get_session_count()`：取得当前 Session 数量。
 - `dl_manager_get_session_at()`：按索引读取 Session，顺序不保证稳定。
 
 ## PID 规则
 
-只有非零 leader PID 会参与索引，并且同一时刻不能被两个 Session 重复登记。按 PID 查询只匹配 leader，不扫描进程树，也不把同 UID 的其他进程自动归入该 Session。后续若要实现完整的 login1 `GetSessionByPID` 语义，需要由可信的 Turnstile/PAM 集成层维护进程归属，不能在核心层猜测。
+只有非零 leader PID 会参与索引，并且同一时刻不能被两个 Session 重复登记。login1 的 `GetSessionByPID()` / `GetUserByPID()` 首先匹配 Leader；否则，仅在目标 PID 可成功打开 pidfd、仍保持存活，且其 PID 出现在已登记 Session cgroup 的直接 `cgroup.procs` 中时才返回该 Session。当前不递归扫描子 cgroup，也不按 UID 猜测进程归属。cgroup 元数据缺失或 pidfd 不可用时，非 Leader 查询会明确返回未找到。
 
 ## 生命周期与指针
 

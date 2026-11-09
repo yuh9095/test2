@@ -667,6 +667,36 @@ static int prop_seat_sessions(sd_bus *b, const char *path,
     return sd_bus_message_close_container(reply);
 }
 
+static int pause_session_devices(sd_bus *bus, dl_manager *manager,
+    const char *session_id)
+{
+    size_t i, count = dl_manager_get_session_device_claim_count(
+        manager, session_id);
+    char object[256];
+    int r;
+    if (count == 0U) return 0;
+    if ((r = make_path(SESSION_PATH, session_id, object, sizeof(object))) < 0)
+        return r;
+    for (i = 0U; i < count; i++) {
+        dl_device_claim_properties claim = {0};
+        if (dl_manager_get_session_device_claim_at(manager, session_id, i,
+                &claim) != DL_OK)
+            return -EIO;
+        if (claim.pause_state != DL_DEVICE_ACTIVE) continue;
+        r = dl_manager_pause_device_timeout(manager, session_id,
+            claim.major_number, claim.minor_number, 1000U);
+        if (r != DL_OK) continue;
+        r = sd_bus_emit_signal(bus, object, BUS_NAME ".Session", "PauseDevice",
+            "uus", claim.major_number, claim.minor_number, "pause");
+        if (r < 0) {
+            (void)dl_manager_pause_device(manager, session_id,
+                claim.major_number, claim.minor_number, true);
+            return r;
+        }
+    }
+    return 0;
+}
+
 static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
     const char *seat_id, const char *session_id)
 {
@@ -678,6 +708,10 @@ static int activate_session_on_seat(sd_bus *bus, dl_manager *manager,
         old_active != NULL) {
         if (snprintf(old_id, sizeof(old_id), "%s", old_active) >=
             (int)sizeof(old_id)) return -ENAMETOOLONG;
+    }
+    if (old_id[0] != '\0' && strcmp(old_id, session_id) != 0) {
+        r = pause_session_devices(bus, manager, old_id);
+        if (r < 0) return r;
     }
     r = dl_manager_set_active_session(manager, seat_id, session_id);
     if (r != DL_OK) return -EINVAL;
@@ -826,11 +860,21 @@ static int method_release_control(sd_bus_message*m,void*u,sd_bus_error*e)
 }
 static int method_take_device(sd_bus_message*m,void*u,sd_bus_error*e)
 {
- char id[128];uint32_t uid,maj,min;const char*sender;sd_bus_creds*c=NULL;int fd=-1,r;bool inactive=false;(void)e;
+ char id[128];uint32_t uid,maj,min;const char*sender;sd_bus_creds*c=NULL;
+ int fd=-1,r;bool inactive=false;dl_device_pause_state state;(void)e;
  if((r=sd_bus_message_read(m,"uu",&maj,&min))<0)return r;
- if((r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c))<0)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
- r=dl_manager_take_device_fd(u,id,sender,maj,min,&fd,&inactive);sd_bus_creds_unref(c);
- if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,"TakeDevice failed (%d)",r);
+ if((r=auth_session(m,u,id,sizeof(id),&uid,&sender,&c))<0)
+  return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_ACCESS_DENIED,"Not authorized");
+ state=dl_manager_get_device_pause_state(u,id,maj,min);
+ if(state==DL_DEVICE_PAUSED)
+  r=dl_manager_resume_device_fd(u,id,sender,maj,min,&fd);
+ else if(state==DL_DEVICE_UNCLAIMED)
+  r=dl_manager_take_device_fd(u,id,sender,maj,min,&fd,&inactive);
+ else
+  r=DL_ERROR_INVALID_STATE;
+ sd_bus_creds_unref(c);
+ if(r!=DL_OK)return sd_bus_reply_method_errorf(m,SD_BUS_ERROR_FAILED,
+  "TakeDevice failed (%d)",r);
  r=sd_bus_reply_method_return(m,"hb",fd,inactive);(void)close(fd);return r;
 }
 static int method_release_device(sd_bus_message*m,void*u,sd_bus_error*e)
@@ -915,6 +959,36 @@ static int kill_error_reply(sd_bus_message *m, int error_number)
             "Requested process operation is not supported safely");
     return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
         "Process operation failed (%d)", error_number);
+}
+
+static int method_session_set_type(sd_bus_message *m, void *userdata,
+    sd_bus_error *error)
+{
+    char id[128];
+    uint32_t uid;
+    const char *sender, *type = NULL;
+    sd_bus_creds *creds = NULL;
+    int r;
+    (void)error;
+    if ((r = sd_bus_message_read(m, "s", &type)) < 0) return r;
+    if (type == NULL || type[0] == '\0')
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_INVALID_ARGS,
+            "Session type must not be empty");
+    if ((r = auth_session(m, userdata, id, sizeof(id), &uid,
+            &sender, &creds)) < 0)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_ACCESS_DENIED,
+            "Not authorized to change this Session");
+    (void)uid;
+    (void)sender;
+    r = dl_manager_set_session_type(userdata, id, type);
+    sd_bus_creds_unref(creds);
+    if (r != DL_OK)
+        return sd_bus_reply_method_errorf(m, SD_BUS_ERROR_FAILED,
+            "Could not update Session type (%d)", r);
+    r = sd_bus_emit_properties_changed(sd_bus_message_get_bus(m),
+        sd_bus_message_get_path(m), BUS_NAME ".Session", "Type", NULL);
+    if (r < 0) return r;
+    return sd_bus_reply_method_return(m, "");
 }
 
 static int method_session_kill(sd_bus_message *m, void *userdata, sd_bus_error *error)
@@ -1211,6 +1285,7 @@ static const sd_bus_vtable session_vtable[] = {
     SD_BUS_PROPERTY("Class","s",prop_session_text,0,SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("Active","b",prop_session_bool,0,SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_METHOD("Activate","","",method_activate,SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("SetType","s","",method_session_set_type,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Lock","","",method_lock,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Unlock","","",method_unlock,SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Terminate","","",method_session_terminate,SD_BUS_VTABLE_UNPRIVILEGED),
@@ -1308,12 +1383,16 @@ short dl_login1_get_events(const dl_login1 *s)
 int dl_login1_get_timeout_ms(const dl_login1 *s)
 {
     const dl_pending_termination *item;
-    uint64_t now, nearest = UINT64_MAX, delta;
-    if (s == NULL || s->terminations == NULL) return -1;
+    uint64_t now, nearest = UINT64_MAX, delta, pause_deadline;
+    if (s == NULL) return -1;
     now = termination_now_ms();
     if (now == 0U) return 0;
     for (item = s->terminations; item != NULL; item = item->next)
         if (item->deadline_ms < nearest) nearest = item->deadline_ms;
+    pause_deadline = dl_manager_get_next_device_pause_deadline(s->manager);
+    if (pause_deadline != 0U && pause_deadline < nearest)
+        nearest = pause_deadline;
+    if (nearest == UINT64_MAX) return -1;
     if (nearest <= now) return 0;
     delta = nearest - now;
     return delta > (uint64_t) INT_MAX ? INT_MAX : (int) delta;
@@ -1326,6 +1405,7 @@ int dl_login1_dispatch(dl_login1 *s)
     do { r=sd_bus_process(s->bus,NULL); } while (r>0);
     if (r < 0) return r;
     termination_dispatch(s);
+    (void)dl_manager_expire_device_pauses(s->manager, termination_now_ms());
     return 0;
 }
 void dl_login1_close(dl_login1 *s)

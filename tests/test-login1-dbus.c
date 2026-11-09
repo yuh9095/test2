@@ -152,11 +152,12 @@ int main(void)
     const char *object_path_value=NULL;
     char object_path[256];
     int r;
-    pid_t kill_child, terminate_child, manager_terminate_child, seat_child, switch_child;
+    pid_t kill_child, session_kill_child, terminate_child, manager_terminate_child, seat_child, switch_child;
     sd_bus_slot *pause_slot = NULL;
     struct stat null_stat, zero_stat;
     uint64_t device_generation = 0U;
     dl_session_properties kill_properties = {0};
+    dl_session_properties session_kill_properties = {0};
     dl_session_properties session_properties = {0};
     dl_session_properties termination_properties = {0};
     dl_session_properties disconnect_properties = {0};
@@ -172,6 +173,14 @@ int main(void)
     kill_properties.service = "test";
     assert(dl_manager_add_session_with_properties(manager,"kill-test",
         (uint32_t)getuid(),&kill_properties)==DL_OK);
+    session_kill_child = fork();
+    assert(session_kill_child >= 0);
+    if (session_kill_child == 0) { for (;;) pause(); }
+    session_kill_properties.leader_pid = (uint32_t)session_kill_child;
+    session_kill_properties.class_name = "user";
+    session_kill_properties.service = "test";
+    assert(dl_manager_add_session_with_properties(manager,"session-kill-test",
+        (uint32_t)getuid(),&session_kill_properties)==DL_OK);
     terminate_child = fork();
     assert(terminate_child >= 0);
     if (terminate_child == 0) { for (;;) pause(); }
@@ -455,8 +464,18 @@ int main(void)
         assert(sd_bus_message_read(reply,"o",&kill_object) >= 0);
         assert(snprintf(kill_path,sizeof(kill_path),"%s",kill_object) > 0);
         sd_bus_message_unref(reply); reply = NULL;
-        call_ok(client,"/org/freedesktop/login1",
-            "org.freedesktop.login1.Manager","KillSession","ssi",
+        {
+            const char *by_pid_path = NULL;
+            r = sd_bus_call_method(client,"org.freedesktop.login1",
+                "/org/freedesktop/login1","org.freedesktop.login1.Manager",
+                "GetSessionByPID",&error,&reply,"u",(uint32_t)kill_child);
+            assert(r >= 0);
+            assert(sd_bus_message_read(reply,"o",&by_pid_path) >= 0);
+            assert(by_pid_path != NULL && strcmp(by_pid_path,kill_path)==0);
+            sd_bus_message_unref(reply); reply = NULL;
+        }
+        call_ok(client,"org.freedesktop.login1",
+            "/org/freedesktop/login1","org.freedesktop.login1.Manager","KillSession","ssi",
             "kill-test","leader",SIGTERM);
         assert(waitpid(kill_child,&status,0)==kill_child);
         assert(WIFSIGNALED(status) && WTERMSIG(status)==SIGTERM);
@@ -469,6 +488,17 @@ int main(void)
             "org.freedesktop.login1.Manager","KillSession",
             SD_BUS_ERROR_INVALID_ARGS,"ssi","kill-test","leader",0);
     }
+    /* Session.Kill(leader) must use the same pidfd-safe path as Manager.KillSession. */
+    {
+        char session_kill_path[256];
+        int status = 0;
+        get_session_path(client, "session-kill-test", session_kill_path);
+        call_ok(client, session_kill_path, "org.freedesktop.login1.Session",
+            "Kill", "si", "leader", SIGTERM);
+        assert(waitpid(session_kill_child, &status, 0) == session_kill_child);
+        assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM);
+    }
+
     /* Session.Terminate sends SIGTERM immediately and completes without
      * blocking the D-Bus dispatch thread. */
     {

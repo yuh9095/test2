@@ -407,6 +407,12 @@ int main(void)
         get_session_path(controller_client,"disconnect-test",disconnect_path);
         call_ok(controller_client,disconnect_path,
             "org.freedesktop.login1.Session","TakeControl","b",0);
+        r=sd_bus_call_method(controller_client,"org.freedesktop.login1",
+            disconnect_path,"org.freedesktop.login1.Session","TakeDevice",
+            &error,&reply,"uu",(uint32_t)major(null_stat.st_rdev),
+            (uint32_t)minor(null_stat.st_rdev));
+        assert(r>=0);
+        sd_bus_message_unref(reply); reply=NULL;
         assert(sd_bus_get_unique_name(controller_client,&unique_name)>=0);
         assert(unique_name!=NULL);
         assert(snprintf(controller_name,sizeof(controller_name),"%s",
@@ -423,6 +429,9 @@ int main(void)
             }
         }
         assert(attempt<100U);
+        assert(dl_manager_get_device_pause_state(manager,"disconnect-test",
+            (uint32_t)major(null_stat.st_rdev),
+            (uint32_t)minor(null_stat.st_rdev))==DL_DEVICE_UNCLAIMED);
     }
     call_ok(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","ListSessions","");

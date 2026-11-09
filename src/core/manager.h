@@ -10,6 +10,8 @@ extern "C" {
 #endif
 
 typedef struct dl_manager dl_manager;
+typedef void (*dl_device_removed_callback)(dl_manager *, const char *,
+    uint32_t, uint32_t, void *);
 
 typedef enum dl_device_capability {
     DL_DEVICE_CAP_NONE = 0U,
@@ -35,6 +37,7 @@ typedef struct dl_device_claim_properties {
     uint32_t major_number;
     uint32_t minor_number;
     dl_device_pause_state pause_state;
+    uint64_t pause_deadline_ms;
 } dl_device_claim_properties;
 
 typedef enum dl_error {
@@ -80,6 +83,8 @@ void dl_manager_destroy(dl_manager *manager);
 /* One optional protocol-adapter context; the core never dereferences it. */
 void dl_manager_set_adapter_userdata(dl_manager *manager, void *userdata);
 void *dl_manager_get_adapter_userdata(const dl_manager *manager);
+void dl_manager_set_device_removed_callback(dl_manager *manager,
+    dl_device_removed_callback callback, void *userdata);
 
 dl_error dl_manager_add_seat(dl_manager *manager, const char *seat_id);
 dl_error dl_manager_remove_seat(dl_manager *manager, const char *seat_id);

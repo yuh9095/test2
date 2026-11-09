@@ -62,6 +62,8 @@ struct dl_manager {
     dl_session *sessions;
     uint64_t next_generation;
     void *adapter_userdata;
+    dl_device_removed_callback device_removed_callback;
+    void *device_removed_userdata;
 };
 
 static char *copy_string(const char *value)
@@ -275,6 +277,14 @@ void dl_manager_set_adapter_userdata(dl_manager *manager, void *userdata)
 void *dl_manager_get_adapter_userdata(const dl_manager *manager)
 {
     return manager == NULL ? NULL : manager->adapter_userdata;
+}
+
+void dl_manager_set_device_removed_callback(dl_manager *manager,
+    dl_device_removed_callback callback, void *userdata)
+{
+    if (manager == NULL) return;
+    manager->device_removed_callback = callback;
+    manager->device_removed_userdata = callback == NULL ? NULL : userdata;
 }
 
 dl_error dl_manager_create(dl_manager **out_manager)
@@ -526,6 +536,10 @@ dl_error dl_manager_remove_device(
         dl_device *device = *cursor;
         if (device->major_number == major_number &&
             device->minor_number == minor_number) {
+            if (manager->device_removed_callback != NULL)
+                manager->device_removed_callback(manager, seat_id,
+                    major_number, minor_number,
+                    manager->device_removed_userdata);
             *cursor = device->next;
             remove_claims_for_device(manager, major_number, minor_number);
             free(device->devnode);
@@ -1123,6 +1137,7 @@ dl_error dl_manager_get_session_device_claim_at(
             out_properties->major_number = claim->major_number;
             out_properties->minor_number = claim->minor_number;
             out_properties->pause_state = claim->pause_state;
+            out_properties->pause_deadline_ms = claim->pause_deadline_ms;
             return DL_OK;
         }
     }

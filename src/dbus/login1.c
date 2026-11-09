@@ -675,6 +675,34 @@ static int prop_seat_sessions(sd_bus *b, const char *path,
     return sd_bus_message_close_container(reply);
 }
 
+static int emit_pause_device_to_controller(sd_bus *bus,
+    dl_manager *manager, const char *session_id, uint32_t major_number,
+    uint32_t minor_number, const char *type)
+{
+    const char *destination = NULL;
+    char object[256];
+    sd_bus_message *message = NULL;
+    int r;
+    if (dl_manager_get_session_controller(manager, session_id,
+            &destination) != DL_OK)
+        return 0;
+    if ((r = make_path(SESSION_PATH, session_id, object,
+            sizeof(object))) < 0)
+        return r;
+    if ((r = sd_bus_message_new_signal(bus, &message, object,
+            BUS_NAME ".Session", "PauseDevice")) < 0)
+        return r;
+    if ((r = sd_bus_message_append(message, "uus", major_number,
+            minor_number, type)) < 0)
+        goto done;
+    if ((r = sd_bus_message_set_destination(message, destination)) < 0)
+        goto done;
+    r = sd_bus_send(bus, message, NULL);
+done:
+    sd_bus_message_unref(message);
+    return r < 0 ? r : 0;
+}
+
 static int pause_session_devices(sd_bus *bus, dl_manager *manager,
     const char *session_id)
 {
@@ -694,8 +722,8 @@ static int pause_session_devices(sd_bus *bus, dl_manager *manager,
         r = dl_manager_pause_device_timeout(manager, session_id,
             claim.major_number, claim.minor_number, 1000U);
         if (r != DL_OK) continue;
-        r = sd_bus_emit_signal(bus, object, BUS_NAME ".Session", "PauseDevice",
-            "uus", claim.major_number, claim.minor_number, "pause");
+        r = emit_pause_device_to_controller(bus, manager, session_id,
+            claim.major_number, claim.minor_number, "pause");
         if (r < 0) {
             (void)dl_manager_pause_device(manager, session_id,
                 claim.major_number, claim.minor_number, true);
@@ -1352,8 +1380,8 @@ static void device_removed_callback(dl_manager *manager, const char *seat_id,
             if (make_path(SESSION_PATH, p.session_id, object,
                     sizeof(object)) < 0)
                 continue;
-            (void)sd_bus_emit_signal(service->bus, object, BUS_NAME ".Session",
-                "PauseDevice", "uus", major_number, minor_number, "gone");
+            (void)emit_pause_device_to_controller(service->bus, manager,
+                p.session_id, major_number, minor_number, "gone");
             break;
         }
     }
@@ -1384,8 +1412,8 @@ static void device_pause_timeout_dispatch(dl_login1 *service)
             if (make_path(SESSION_PATH, p.session_id, object,
                     sizeof(object)) < 0)
                 continue;
-            (void)sd_bus_emit_signal(service->bus, object, BUS_NAME ".Session",
-                "PauseDevice", "uus", claim.major_number,
+            (void)emit_pause_device_to_controller(service->bus,
+                service->manager, p.session_id, claim.major_number,
                 claim.minor_number, "force");
         }
     }

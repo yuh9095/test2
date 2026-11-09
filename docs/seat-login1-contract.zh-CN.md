@@ -77,7 +77,7 @@
 - `force`：访问已经被服务端强制暂停，是异步通知；客户端不需要调用 PauseDeviceComplete。
 - `gone`：设备已经移除。客户端不应再等待该设备的 ResumeDevice，也无需再调用 ReleaseDevice；若同 major/minor 的新设备加入，可重新 TakeDevice。
 
-当前实现对 `pause`、`force`、`gone` 发出 Session `PauseDevice` 信号；控制器断连会清理 claim。信号目标目前是该 Session 对象的总线广播，而非按 unique name 定向。完整协议应进一步验证并收紧到当前控制器。
+当前实现对 `pause`、`force`、`gone` 发出 Session `PauseDevice` 信号，并通过 D-Bus destination 将信号定向发送给当前控制器 unique name；控制器断连会清理 claim。
 
 ## 4. FD 生命周期
 

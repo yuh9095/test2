@@ -34,7 +34,7 @@ dinit-logind --default-seat seat0
 
 poll 辅助函数每次最多分发 64 个排队事件，避免设备事件长期占用守护进程。超时 -1 表示无限等待，0 表示立即轮询，正数表示等待毫秒数。EINTR 会交给调用者处理，以便主循环及时处理信号。已经使用 epoll 的守护进程仍可直接使用原始 FD。
 
-适配层不会启动 eudevd、修改 udev 规则或自行授予设备访问权限。设备授权和 FD 生命周期仍由核心 Manager 负责；login1 D-Bus 传输层仍待接入。
+适配层不会启动 eudevd、修改 udev 规则或自行授予设备访问权限。设备授权和 FD 生命周期由核心 Manager 负责；login1 D-Bus 通过 Unix FD 传递实现 TakeDevice/ReleaseDevice，并将 Seat 活动切换映射为 PauseDevice 通知。
 
 ## VT 适配层
 

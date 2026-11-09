@@ -5,10 +5,12 @@ A login, session, seat, and device-management service for systems using
 
 [简体中文](README.zh-CN.md)
 
-> **Status: early development.** The repository contains an initial C11 core
-> model, Linux libudev/eudev device integration, and a foreground daemon
-> supervised by Dinit. The login1 D-Bus service, Turnstile session creation,
-> libseat FD handoff, and full elogind API compatibility are not yet complete.
+> **Status: early development / functional prototype.** The repository now
+> contains a C11 session/seat core, a login1 D-Bus service, privileged PAM
+> Session registration, pidfd/cgroup process control, Linux VT operations,
+> D-Bus device-FD transfer, and libseat-compatible pause/resume notifications.
+> Full elogind compatibility, Turnstile lifecycle synchronization, power
+> management, inhibitors, and production desktop validation remain incomplete.
 
 ## Build and test
 
@@ -76,9 +78,15 @@ currently accepts `tty`, `drm`, and `input` devices. It prefers explicit
 to assign otherwise-unlabelled supported devices to a chosen Seat. Without
 that option, unlabelled devices are not silently assigned to `seat0`.
 
-This is device discovery and core registration, not yet a complete login1
-service or graphical session manager. Logical device claims and the current
-device-FD APIs are not yet connected to Unix FD transfer over D-Bus.
+The login1 D-Bus adapter exposes Session device methods and transfers verified
+device FDs using D-Bus Unix-FD passing. When a Seat's active Session changes,
+the old Session's claimed devices receive PauseDevice("pause"); clients can
+acknowledge with PauseDeviceComplete, and a later TakeDevice reopens the device
+after reactivation. Unacknowledged pauses receive a timed "force" notification;
+udev removal sends "gone" before the core drops the claim. These operations
+provide the login1-facing protocol used by libseat's logind backend, but do not
+constitute kernel-level revocation of arbitrary FDs already duplicated into a
+client process.
 
 ## Session registration and cgroup metadata
 
@@ -156,8 +164,11 @@ The upstream seatd/libseat 0.9.3 Linux source set is vendored under
 `third_party/seatd/UPSTREAM.md`. It includes the seatd server, libseat public
 API and backends, Linux device/VT handling, tests, example, and manual sources.
 
-This is a source import only: the root dinit-logind build does not yet build or
-launch the vendored seatd daemon, and no runtime integration is claimed yet.
-The upstream libseat logind backend is disabled by default in its vendored
-Meson options to avoid an implicit libsystemd/elogind dependency. Integration
-must preserve one authoritative Seat/Session state source.
+The upstream seatd daemon and libseat library are vendored as source, but the
+root build does not yet build or launch a second seatd daemon. The login1
+server now implements the D-Bus operations used by the libseat logind backend,
+including SetType, TakeControl, TakeDevice, PauseDevice, PauseDeviceComplete,
+and ReleaseDevice. The backend's sd-login session discovery still depends on
+systemd-compatible session metadata and is not yet provided by this project.
+The vendored logind backend remains disabled by default to avoid an implicit
+libsystemd/elogind dependency.

@@ -2,7 +2,7 @@
 
 登录、Session、Seat 与设备管理服务，面向使用 Dinit 的 Linux 系统。
 
-> 项目处于早期开发阶段。已有 C11 核心、libudev/eudev 设备发现、特权 Session 注册协议、部分 login1 D-Bus、pidfd Leader 信号发送、cgroup v2 安全终止，以及 Session/Manager/Seat 的异步 Terminate（5 秒宽限期）。设备 pause/resume 信号与 FD 恢复交接、完整 Turnstile 生命周期、inhibitor、电源管理和完整 elogind API 兼容仍未完成。
+> 项目处于早期开发/功能原型阶段。已有 C11 Session/Seat 核心、login1 D-Bus 服务、特权 PAM Session 注册、pidfd/cgroup 进程控制、Linux VT 操作、D-Bus 设备 FD 传递，以及 libseat logind 后端所需的设备暂停/恢复通知。完整 elogind API、Turnstile 生命周期同步、inhibitor、电源管理和真实桌面环境验证仍未完成。
 
 ## 构建
 
@@ -26,13 +26,17 @@ session required pam_dinit_logind.so socket=/run/dinit-logind/session.sock
 
 ## login1 D-Bus 服务端
 
-当前提供 login1 Manager、Session、Seat、User 的查询和部分操作。支持 pidfd 安全的 `Kill(leader, signal)`、经过 cgroup v2 成员核验的 `Kill(all, SIGKILL)`，以及异步 `Terminate()` / `TerminateSession()`（SIGTERM、5 秒宽限期、超时 SIGKILL；无 cgroup 时仅能保证终止登记的 Leader）。root-only `Seat.Terminate()` 也已实现：只对该 Seat 的 Session 安排相同的异步终止流程；多个 Session 的安排不是事务，若中途失败，已安排的终止不会回滚。接口范围见 [login1 D-Bus 文档](docs/login1-dbus.zh-CN.md)。构建需要 `libsystemd` 的 `sd-bus` 开发库，但不依赖 systemd PID 1 或 systemd-logind。
+当前提供 login1 Manager、Session、Seat、User 的查询和部分操作。Session 支持 SetType、TakeControl、TakeDevice、ReleaseDevice、PauseDeviceComplete；设备 FD 通过 D-Bus Unix FD 传递。Seat 活动 Session 切换时发出 PauseDevice("pause")，客户端确认后释放管理 FD；超时发送 "force"，设备被 eudev 移除时发送 "gone"。重新激活 Session 后，客户端可再次调用 TakeDevice 获取新 FD。这里的 force 是协议通知和服务端 FD 清理，不是内核对客户端已复制 FD 的通用撤销。支持 pidfd 安全的 `Kill(leader, signal)`、经过 cgroup v2 成员核验的 `Kill(all, SIGKILL)`，以及异步 `Terminate()` / `TerminateSession()`（SIGTERM、5 秒宽限期、超时 SIGKILL；无 cgroup 时仅能保证终止登记的 Leader）。root-only `Seat.Terminate()` 也已实现：只对该 Seat 的 Session 安排相同的异步终止流程；多个 Session 的安排不是事务，若中途失败，已安排的终止不会回滚。接口范围见 [login1 D-Bus 文档](docs/login1-dbus.zh-CN.md)。构建需要 `libsystemd` 的 `sd-bus` 开发库，但不依赖 systemd PID 1 或 systemd-logind。
 
 ## Session 注册与 cgroup 元数据
 
 特权 Unix `SOCK_SEQPACKET` 注册协议已升级到版本 2，可选携带相对于统一 cgroup 挂载点的 Session cgroup 路径。服务端拒绝绝对路径、空路径组件、`.`、`..` 和控制字符，并在核心模型中保存该元数据；login1 Session 的 `CGroup` 属性会以标准绝对路径形式公开它。
 
 协议仍接受旧版 v1 消息（包括旧长度的 socket 数据包），未提供 cgroup 信息的旧客户端可以继续注册 Session。核心还会在注册时尝试捕获 Leader 的 pidfd，保存稳定的进程身份引用；内核不支持 pidfd 或进程已退出时，安全复制接口会明确失败，不回退到裸 PID。cgroup 路径本身仍只是登记元数据，不自动证明成员身份。执行 `Kill(all, SIGKILL)` 时，服务端会通过 cgroup 文件描述符逐组件安全遍历，核对 `cgroup.procs` 中存在已由 pidfd 固定身份的 Leader，再写入 `cgroup.kill`；`Kill(leader, signal)` 则直接使用 pidfd，绝不回退到裸 PID。异步 `Terminate()` / `TerminateSession()` 会先通过 pidfd 向 Leader 发送 SIGTERM，5 秒后若仍未退出则升级为 SIGKILL；若登记了 cgroup v2 路径，会在请求时安全固定并验证该 cgroup，超时后使用 `cgroup.kill` 清理整个 cgroup。没有 cgroup 时只保证终止 Leader。
+
+## 设备与 libseat 集成
+
+login1 服务端已实现 vendored libseat logind 后端使用的 D-Bus 设备控制子集，包括 SetType、TakeControl、TakeDevice、ReleaseDevice、PauseDevice、PauseDeviceComplete，以及 Active 属性变化通知。完整 libseat logind backend 仍依赖 sd-login 提供的 Session/Seat 发现元数据；本项目尚未实现 systemd 兼容的 /run/systemd/sessions 数据文件或 libsystemd 兼容层，因此不能宣称所有 libseat 自动发现路径已经打通。
 
 ## Turnstile 集成
 

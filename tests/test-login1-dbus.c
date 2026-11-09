@@ -401,7 +401,7 @@ int main(void)
     /* A vanished D-Bus controller must not leave ownership or device claims. */
     {
         char disconnect_path[256], controller_name[128];
-        const char *unique_name=NULL, *remaining=NULL;
+        const char *unique_name=NULL;
         unsigned int attempt;
         assert(sd_bus_open_system(&controller_client)==0);
         get_session_path(controller_client,"disconnect-test",disconnect_path);
@@ -414,8 +414,8 @@ int main(void)
         sd_bus_close_unref(controller_client);
         controller_client=NULL;
         for(attempt=0;attempt<100U;attempt++) {
-            if(dl_manager_get_session_controller(manager,"disconnect-test",
-                    &remaining)!=DL_OK)
+            if(dl_manager_session_is_controller(manager,"disconnect-test",
+                    controller_name)!=DL_OK)
                 break;
             {
                 struct timespec delay={0,10000000L};
@@ -423,7 +423,6 @@ int main(void)
             }
         }
         assert(attempt<100U);
-        (void)controller_name;
     }
     call_ok(client,"/org/freedesktop/login1",
         "org.freedesktop.login1.Manager","ListSessions","");
